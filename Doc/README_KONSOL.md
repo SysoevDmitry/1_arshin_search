@@ -8,7 +8,7 @@
 - ✅ Работает через SSH/терминал
 - ✅ Не требует X11/GUI
 - ✅ Минимальные требования к ресурсам
-- ✅ Поддержка фоновой работы (tmux/screen)
+- ✅ Поддержка фоновой работы (tmux/screen/nohup)
 - ✅ Полная поддержка всех функций пакетного поиска
 
 ---
@@ -18,30 +18,31 @@
 ### 1. Установка зависимостей
 
 ```bash
-cd /home/dmitry/Документы/АРШИН/Интерфейс/1_arshin_search
+# Перейдите в директорию проекта
+cd 1_arshin_search
 
 # Создание виртуального окружения
 python3 -m venv venv
 source venv/bin/activate
 
 # Установка зависимостей
-pip install pandas openpyxl aiohttp requests tqdm
+pip install -r requirements.txt
 ```
 
 ### 2. Запуск
 
 ```bash
 # Базовый запуск
-python arshin_app_konsol.py -f тесты/Тестовый_запрос_2.xlsx -y 2020,2021,2022
+python Konsol_Excel/main.py -f запросы.xlsx -y 2020,2021,2022
 
 # С экспортом в CSV
-python arshin_app_konsol.py -f запросы.xlsx -y 2020-2025 -o результат.csv
+python Konsol_Excel/main.py -f запросы.xlsx -y 2020-2025 -o результат.csv
 
 # Показать статистику БД
-python arshin_app_konsol.py --stats
+python Konsol_Excel/main.py --stats
 
 # Очистить базу данных
-python arshin_app_konsol.py --clear
+python Konsol_Excel/main.py --clear
 ```
 
 ---
@@ -124,7 +125,7 @@ tmux attach -t arshin_search
 screen -S arshin
 
 # Запуск поиска
-python arshin_app_konsol.py -f данные.xlsx -y 2020-2025
+python Konsol_Excel/main.py -f данные.xlsx -y 2020-2025
 
 # Отключение: Ctrl+A, затем D
 
@@ -134,18 +135,320 @@ screen -r arshin
 
 ---
 
+## 🌙 Фоновая работа для длительных задач
+
+Для обработки больших файлов (1000+ записей) рекомендуется запускать приложение в фоновом режиме.
+
+### Способ 1: tmux (рекомендуется)
+
+**tmux** — современный терминальный мультиплексор.
+
+#### 1. Установка tmux
+
+```bash
+# Linux (Debian/Ubuntu)
+sudo apt-get install tmux
+
+# Linux (CentOS/RHEL)
+sudo yum install tmux
+
+# Проверка версии
+tmux -V
+```
+
+#### 2. Создание сессии
+
+```bash
+# Создать новую сессию с именем
+tmux new -s arshin_search
+
+# Или просто создать сессию (автоматическое имя)
+tmux new
+```
+
+#### 3. Запуск приложения
+
+```bash
+# Внутри сессии tmux
+cd 1_arshin_search
+source venv/bin/activate
+
+# Запуск поиска с логированием
+python Konsol_Excel/main.py -f большой_файл.xlsx -y 2015-2026 -o результат.csv 2>&1 | tee logs/arshin_$(date +%Y%m%d_%H%M%S).log
+```
+
+#### 4. Отключение от сессии
+
+```
+# Нажмите: Ctrl+B, затем отпустите и нажмите D
+# (Detach — отключиться)
+```
+
+После этого вы вернётесь в обычный терминал, а сессия продолжит работу в фоне.
+
+#### 5. Проверка активных сессий
+
+```bash
+# Список сессий
+tmux ls
+
+# Вывод:
+# arshin_search: 1 windows (created Mon Mar 23 10:00:00 2026)
+```
+
+#### 6. Подключение к сессии позже
+
+```bash
+# Подключиться к существующей сессии
+tmux attach -t arshin_search
+
+# Или сокращённо
+tmux a -t arshin_search
+
+# Если сессия одна, можно просто:
+tmux attach
+```
+
+#### 7. Завершение работы сессии
+
+```bash
+# Внутри сессии tmux:
+# Ctrl+B, затем : (двоеточие)
+# Введите: kill-session
+
+# Или извне:
+tmux kill-session -t arshin_search
+```
+
+---
+
+### Способ 2: GNU screen
+
+**screen** — классический терминальный мультиплексор.
+
+#### 1. Установка screen
+
+```bash
+# Linux (Debian/Ubuntu)
+sudo apt-get install screen
+
+# Linux (CentOS/RHEL)
+sudo yum install screen
+```
+
+#### 2. Создание сессии
+
+```bash
+# Создать сессию с именем
+screen -S arshin
+
+# Создать сессию без имени
+screen
+```
+
+#### 3. Запуск приложения
+
+```bash
+# Внутри сессии screen
+cd 1_arshin_search
+source venv/bin/activate
+python Konsol_Excel/main.py -f данные.xlsx -y 2020-2026 -o результат.csv
+```
+
+#### 4. Отключение от сессии
+
+```
+# Нажмите: Ctrl+A, затем отпустите и нажмите D
+# (Detach — отключиться)
+```
+
+#### 5. Проверка сессий
+
+```bash
+# Список сессий
+screen -ls
+
+# Вывод:
+# There is a screen on:
+#   12345.pts-0.server    (Detached)
+# 1 Socket in /var/run/screen/S-user.
+```
+
+#### 6. Подключение к сессии
+
+```bash
+# Подключиться к сессии по имени
+screen -r arshin
+
+# Если сессия одна:
+screen -r
+
+# Если сессия занята (нужно отцепить):
+screen -D -r arshin
+```
+
+---
+
+### Способ 3: nohup (простой фон)
+
+**nohup** — запуск процесса с игнорированием сигнала hangup.
+
+#### 1. Запуск в фоне
+
+```bash
+cd 1_arshin_search
+source venv/bin/activate
+
+# Запуск с перенаправлением вывода
+nohup python Konsol_Excel/main.py -f данные.xlsx -y 2020-2026 -o результат.csv > logs/arshin.log 2>&1 &
+
+# Запомнить PID процесса
+echo $!
+```
+
+#### 2. Проверка статуса
+
+```bash
+# Проверка процесса
+ps aux | grep arshin
+
+# Проверка вывода
+tail -f logs/arshin.log
+
+# Проверка, работает ли процесс
+ps -p <PID>
+```
+
+#### 3. Остановка процесса
+
+```bash
+# Найти PID
+ps aux | grep "Konsol_Excel/main.py"
+
+# Остановить
+kill <PID>
+
+# Или принудительно
+kill -9 <PID>
+```
+
+---
+
+### Сравнение способов
+
+| Способ | Плюсы | Минусы | Когда использовать |
+|--------|-------|--------|-------------------|
+| **tmux** | Современный, удобные хоткеи, разделение окон | Требует установки | Для интерактивной работы |
+| **screen** | Классика, есть везде | Меньше функций | На старых серверах |
+| **nohup** | Простой, не требует установки | Нет интерактива | Для простых задач |
+| **systemd** | Автозапуск, логи, мониторинг | Требует root | Для продакшена |
+
+---
+
 ## 📁 Структура файлов
 
 ```
-1_arshin_search/
-├── arshin_app_konsol.py    # Консольное приложение
-├── arshin_konsol.db        # База данных (создаётся автоматически)
-├── arshin_konsol.log       # Лог файл
-├── config/
-│   ├── exact_queries.csv   # Точные запросы
-│   └── manufacturers.csv   # Производители
-└── exports/
-    └── результат.csv       # Экспортированные данные
+project/
+├── Konsol_Excel/
+│   ├── main.py             # Основное приложение
+│   ├── run.sh              # Скрипт запуска (Linux)
+│   ├── run.bat             # Скрипт запуска (Windows)
+│   ├── config.py           # Конфигурация
+│   ├── database.py         # Работа с БД
+│   ├── arshin_excel.db     # База данных SQLite
+│   ├── config/
+│   │   ├── exact_queries.csv
+│   │   └── manufacturers.csv
+│   └── exports/
+│       └── результат.csv   # Экспортированные данные
+├── logs/
+│   └── arshin_*.log        # Логи приложения
+└── venv/                   # Виртуальное окружение
+```
+
+---
+
+## 📊 Просмотр результатов после фоновой работы
+
+### 1. Проверка завершения задачи
+
+```bash
+# Для tmux/screen — подключиться к сессии
+tmux attach -t arshin_search
+# или
+screen -r arshin
+
+# Если задача завершена — сессия закроется автоматически
+```
+
+### 2. Проверка логов
+
+```bash
+# Просмотр лога в реальном времени
+tail -f logs/arshin_20260323_100000.log
+
+# Просмотр последних строк
+tail -100 logs/arshin_20260323_100000.log
+
+# Поиск ошибок
+grep -i "error\|exception" logs/arshin_*.log
+```
+
+### 3. Проверка базы данных
+
+```bash
+# Статистика БД
+python Konsol_Excel/main.py --stats
+
+# Вывод:
+# ======================================================================
+# 📊 СТАТИСТИКА БАЗЫ ДАННЫХ
+# ======================================================================
+#    Всего записей: 144
+#    Пригодных: 140 (97.2%)
+#    Непригодных: 4
+#
+#    По годам:
+#    - 2020: 2
+#    - 2021: 5
+#    ...
+```
+
+### 4. Просмотр экспортированных файлов
+
+```bash
+# Список файлов в exports/
+ls -lh Konsol_Excel/exports/
+
+# Предпросмотр CSV
+head -20 Konsol_Excel/exports/результат.csv
+
+# Количество строк
+wc -l Konsol_Excel/exports/результат.csv
+```
+
+### 5. Открытие CSV в Excel
+
+```bash
+# Linux (LibreOffice)
+libreoffice --calc Konsol_Excel/exports/результат.csv
+
+# Windows
+start Konsol_Excel\exports\результат.csv
+
+# macOS
+open Konsol_Excel/exports/результат.csv
+```
+
+### 6. Конвертация в Excel
+
+```bash
+# Если нужен .xlsx вместо .csv
+python -c "
+import pandas as pd
+df = pd.read_csv('Konsol_Excel/exports/результат.csv', sep=';')
+df.to_excel('Konsol_Excel/exports/результат.xlsx', index=False)
+"
 ```
 
 ---
@@ -267,36 +570,72 @@ python arshin_app_konsol.py --stats
 DATE=$(date +%Y-%m-%d)
 LOG_FILE="logs/search_${DATE}.log"
 
-cd /home/dmitry/Документы/АРШИН/Интерфейс/1_arshin_search
+cd 1_arshin_search
 source venv/bin/activate
 
-python arshin_app_konsol.py \
+python Konsol_Excel/main.py \
     -f новые_запросы.xlsx \
     -y 2025,2026 \
-    -o "exports/search_${DATE}.csv" \
+    -o "Konsol_Excel/exports/search_${DATE}.csv" \
     2>&1 | tee "$LOG_FILE"
 ```
 
-### Сценарий 2: Массовый поиск за все годы
+### Сценарий 2: Массовый поиск за все годы (в фоне)
 
 ```bash
 #!/bin/bash
-# full_search.sh
+# full_search_tmux.sh
 
-cd /home/dmitry/Документы/АРШИН/Интерфейс/1_arshin_search
-source venv/bin/activate
+# Создание сессии tmux
+tmux new -d -s arshin_full
 
-python arshin_app_konsol.py \
-    -f полный_список.xlsx \
-    -y 2010-2026 \
-    -o exports/full_search.csv
+# Запуск в сессии
+tmux send-keys -t arshin_full "cd 1_arshin_search && source venv/bin/activate" Enter
+tmux send-keys -t arshin_full "python Konsol_Excel/main.py -f полный_список.xlsx -y 2010-2026 -o Konsol_Excel/exports/full_search.csv" Enter
+
+# Отключение
+tmux detach -s arshin_full
+
+# Позже подключиться: tmux attach -t arshin_full
 ```
 
 ### Сценарий 3: Автоматизация через cron
 
 ```bash
+# Открыть crontab
+crontab -e
+
 # Запуск каждый день в 02:00
-0 2 * * * /home/dmitry/Документы/АРШИН/Интерфейс/1_arshin_search/daily_search.sh
+0 2 * * * /home/dmitry/1_arshin_search/daily_search.sh >> /home/dmitry/1_arshin_search/logs/cron.log 2>&1
+
+# Запуск каждый понедельник в 03:00
+0 3 * * 1 /home/dmitry/1_arshin_search/weekly_search.sh >> /home/dmitry/1_arshin_search/logs/cron.log 2>&1
+```
+
+### Сценарий 4: Запуск в tmux с логированием
+
+```bash
+#!/bin/bash
+# tmux_search.sh
+
+SESSION_NAME="arshin_$(date +%Y%m%d_%H%M%S)"
+LOG_FILE="logs/search_${SESSION_NAME}.log"
+
+# Создание сессии
+tmux new -d -s $SESSION_NAME
+
+# Запуск с логированием
+tmux send-keys -t $SESSION_NAME "cd 1_arshin_search && source venv/bin/activate" Enter
+tmux send-keys -t $SESSION_NAME "python Konsol_Excel/main.py -f $1 -y 2020-2026 -o Konsol_Excel/exports/result_${SESSION_NAME}.csv 2>&1 | tee $LOG_FILE" Enter
+
+echo "✅ Сессия '$SESSION_NAME' создана"
+echo "📄 Лог: $LOG_FILE"
+echo "🔗 Подключиться: tmux attach -t $SESSION_NAME"
+```
+
+**Использование:**
+```bash
+./tmux_search.sh большой_файл.xlsx
 ```
 
 ---
@@ -325,12 +664,31 @@ python arshin_app_konsol.py \
 ## 📞 Поддержка
 
 При возникновении проблем:
-1. Проверьте лог файл: `arshin_konsol.log`
+1. Проверьте лог файл: `logs/arshin_*.log`
 2. Проверьте доступность API: `curl https://fgis.gost.ru/fundmetrology/eapi/vri`
 3. Убедитесь, что Excel файл корректен
+4. Проверьте документацию в папке `Doc/`
+
+**Полезные команды:**
+```bash
+# Проверка логов
+tail -f logs/arshin_*.log
+
+# Статистика БД
+python Konsol_Excel/main.py --stats
+
+# Проверка процесса (для nohup)
+ps aux | grep Konsol_Excel
+
+# Проверка сессий tmux
+tmux ls
+
+# Проверка сессий screen
+screen -ls
+```
 
 ---
 
 **Версия:** 2.13 Console
-**Дата:** 2026-03-03
+**Дата:** 2026-03-23
 **Платформа:** Linux/Windows (консоль)
