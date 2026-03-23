@@ -6,6 +6,7 @@ set -e
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 VENV_DIR="$SCRIPT_DIR/../venv"
+VENV_PYTHON="$VENV_DIR/bin/python"
 REQUIREMENTS_FILE="$SCRIPT_DIR/../requirements.txt"
 PYTHON=""
 
@@ -14,10 +15,9 @@ echo "🔍 ФГИС АРШИН - Konsol_Excel v6.1"
 echo "======================================================================"
 
 # Проверка виртуального окружения
-if [ -d "$VENV_DIR" ] && [ -f "$VENV_DIR/bin/activate" ]; then
+if [ -d "$VENV_DIR" ] && [ -f "$VENV_PYTHON" ]; then
     echo "✅ Виртуальное окружение найдено: $VENV_DIR"
-    source "$VENV_DIR/bin/activate"
-    PYTHON="python"
+    PYTHON="$VENV_PYTHON"
 else
     echo "⚠️  Виртуальное окружение не найдено: $VENV_DIR"
     echo "📦 Попытка использовать системный Python..."
@@ -28,14 +28,6 @@ else
         PYTHON="python"
     else
         echo "❌ Python не найден. Установите Python 3.8+"
-        exit 1
-    fi
-    
-    # Проверка зависимостей
-    echo "🔍 Проверка зависимостей..."
-    if ! $PYTHON -c "import pandas" 2>/dev/null; then
-        echo "⚠️  Зависимости не установлены."
-        echo "📦 Установка: pip install pandas openpyxl aiohttp tqdm"
         exit 1
     fi
 fi
