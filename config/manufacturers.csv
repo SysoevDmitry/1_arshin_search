@@ -1,0 +1,122 @@
+# Словарь ключевых слов для определения производителей
+# Формат: keyword,manufacturer,category,priority
+# keyword - ключевое слово для поиска (в нижнем регистре)
+# manufacturer - название производителя для отображения
+# category: electric (электроэнергия), gas (газ), water (вода), heat (тепло), other (прочее), exclude (исключить)
+# priority: high (высокий), medium (средний), low (низкий)
+
+# ===== ПРОИЗВОДИТЕЛИ ПРИБОРОВ УЧЕТА ЭЛЕКТРОЭНЕРГИИ =====
+меркурий,Меркурий (Инкотекс),electric,high
+инкотекс,Инкотекс,electric,high
+цева,Инкотекс,electric,high
+цэ,Инкотекс,electric,high
+
+нева,Нева (Тайпит),electric,high
+тайпит,Тайпит,electric,medium
+
+энергомера,Энергомера,electric,high
+се,Энергомера,electric,medium
+
+матрица,Матрица,electric,medium
+
+abb,ABB,electric,low
+
+schneider,Schneider Electric,electric,low
+iem,Schneider Electric,electric,low
+acti,Schneider Electric,electric,low
+
+альфа,Альфа,electric,medium
+
+милур,Милур,electric,medium
+
+псч,ПСЧ,electric,medium
+
+сэт,СЭТ,electric,medium
+
+гранд,Гранд,electric,medium
+
+квант,Квант,electric,medium
+
+сиemens,Siemens,electric,low
+
+itron,Itron,electric,low
+
+landis,Landis+Gyr,electric,low
+
+elster,Elster,electric,low
+
+ge,General Electric,electric,low
+
+# ===== ИСКЛЮЧЕНИЯ - НЕ ОТНОСЯТСЯ К ЭЛЕКТРОЭНЕРГИИ =====
+# Эти производители будут использоваться для фильтрации
+
+# Вода
+вода,Водомер,water,low
+водомер,Водомер,water,low
+водосчетчик,Водомер,water,low
+счетчик воды,Водомер,water,low
+холодной воды,Водомер,water,low
+горячей воды,Водомер,water,low
+
+# Газ
+газ,Газдевайс,gas,low
+газдевайс,Газдевайс,gas,low
+газсчетчик,Газдевайс,gas,low
+счетчик газа,Газдевайс,gas,low
+бытовые газовые,Газдевайс,gas,low
+
+# Тепло
+тепло,Теплоприбор,heat,low
+теплоприбор,Теплоприбор,heat,low
+тепловычислитель,Теплоприбор,heat,low
+вычислитель количества теплоты,Теплоприбор,heat,low
+теплопотребление,Теплоприбор,heat,low
+
+# ===== МЕДИЦИНСКИЕ ПРИБОРЫ (ИСКЛЮЧИТЬ) =====
+термометры медицинские,Медицинские,exclude,high
+термометр медицинский,Медицинские,exclude,high
+ртутные стеклянные медицинские,Медицинские,exclude,high
+максимальные стеклянные ртутные,Медицинские,exclude,high
+
+# ===== ВЗВЕШИВАНИЕ (ИСКЛЮЧИТЬ) =====
+весы,Весы,exclude,high
+весы электронные,Весы,exclude,medium
+весы почтовые,Весы,exclude,medium
+весы настольные,Весы,exclude,medium
+весы рычажные,Весы,exclude,medium
+весы для новорожденных,Весы,exclude,medium
+
+# ===== ДАВЛЕНИЕ (ИСКЛЮЧИТЬ) =====
+манометры,Манометры,exclude,high
+вакуумметры,Манометры,exclude,medium
+мановакуумметры,Манометры,exclude,medium
+напоромеры,Манометры,exclude,medium
+тягомеры,Манометры,exclude,medium
+тягонапоромеры,Манометры,exclude,medium
+
+# ===== ТЕМПЕРАТУРА (ИСКЛЮЧИТЬ) =====
+термометры ртутные,Термометры,exclude,high
+термометры стеклянные,Термометры,exclude,high
+термометры лабораторные,Термометры,exclude,medium
+термопреобразователи,Термометры,exclude,medium
+
+# ===== ГАЗОВЫЕ СИГНАЛИЗАТОРЫ (ИСКЛЮЧИТЬ) =====
+сигнализаторы метана,Газосигнализаторы,exclude,high
+сигнализаторы с внешним сенсором метана,Газосигнализаторы,exclude,high
+
+# ===== ИЗМЕРИТЕЛЬНЫЕ ПРИБОРЫ ОБЩЕГО НАЗНАЧЕНИЯ (ИСКЛЮЧИТЬ) =====
+штангенглубиномеры,Штангенinstrumenty,exclude,high
+нутромеры,Нутромеры,exclude,high
+аремометры,Ареометры,exclude,high
+гигрометры,Гигрометры,exclude,high
+психрометрические,Гигрометры,exclude,medium
+мегаомметры,Мегаомметры,exclude,high
+приемники-ловушки,Приемники,exclude,high
+счетчики времени наработки,Счетчики времени,exclude,high
+бутирометры,Бутирометры,exclude,high
+
+# ===== ПРОЧИЕ ИСКЛЮЧЕНИЯ =====
+поверка СИ массы,Весы,exclude,high
+для статического взвешивания,Весы,exclude,high
+для распределения теплопотребления,Тепло,exclude,high
+расхода электромагнитные,Расходомеры,exclude,medium
