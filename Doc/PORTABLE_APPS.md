@@ -3,7 +3,7 @@
 ## 🗂 Структура
 
 ```
-1_arshin_search/
+arshin_search/
 ├── App_Linux/           # Портативная версия для Linux
 │   ├── README.md        # Документация
 │   ├── build_appimage.sh    # Скрипт сборки AppImage

@@ -27,7 +27,7 @@ sudo apt-get install python3 python3-venv python3-pip libgtk-3-devel
 ### Шаг 1: Подготовка
 
 ```bash
-cd /home/dmitry/Документы/АРШИН/Интерфейс/1_arshin_search
+cd /home/dmitry/Документы/АРШИН/Интерфейс/arshin_search
 
 # Создание виртуального окружения
 python3 -m venv venv
@@ -183,5 +183,5 @@ AppImage/
 
 ---
 
-**Версия:** 2.6  
-**Дата:** 2026-03-02
+**Версия:** 2.14
+**Дата:** 2026-03-23

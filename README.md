@@ -1,6 +1,6 @@
 # 🔍 ФГИС АРШИН — Приложение для работы с реестром поверок
 
-**Версия:** 2.13 (актуализированная)
+**Версия:** 2.14
 **Дата:** 23 марта 2026 г.
 **Платформы:** Linux, Windows (GUI + Console)
 
@@ -14,7 +14,12 @@
 4. [Возможности](#возможности)
 5. [Документация](#документация)
 6. [Версии приложения](#версии-приложения)
-7. [Помощь](#помощь)
+7. [Конфигурация](#конфигурация)
+8. [Экспорт данных](#экспорт-данных)
+9. [Тестирование](#тестирование)
+10. [Важные замечания](#важные-замечания)
+11. [Поддержка](#поддержка)
+12. [Помощь](#помощь)
 
 ---
 
@@ -53,7 +58,7 @@ pip install -r requirements.txt
 ```bash
 # Через скрипт запуска (рекомендуется)
 # Linux:
-./run.sh
+bash run.sh
 # Windows:
 run.bat
 
@@ -66,12 +71,12 @@ python arshin_app.py
 ```bash
 # Через скрипт запуска (рекомендуется)
 # Linux:
-./Konsol_Excel/run.sh --stats
+bash Konsol_Excel/run.sh --stats
 # Windows:
 Konsol_Excel\run.bat --stats
 
 # Пакетный поиск
-./Konsol_Excel/run.sh -f запросы.xlsx -y 2020-2025 -o результат.csv
+bash Konsol_Excel/run.sh -f запросы.xlsx -y 2020-2025 -o результат.csv
 
 # Помощь
 python Konsol_Excel/main.py --help
@@ -82,17 +87,20 @@ python Konsol_Excel/main.py --help
 ## 📁 СТРУКТУРА ПРОЕКТА
 
 ```
-1_arshin_search/
+arshin_search/
 ├── 📄 arshin_app.py              # GUI приложение (Tkinter)
 ├── 📄 requirements.txt           # Зависимости Python
 ├── 📄 README.md                  # Этот файл
-├── 📄 HELP.md                    # Помощь пользователя
-├── 📄 ПРЕЗЕНТАЦИЯ.md             # Презентация проекта
+├── 📄 run.sh                     # Запуск GUI (Linux)
+├── 📄 run.bat                    # Запуск GUI (Windows)
 │
 ├── 📂 Doc/                       # Документация
-│   ├── README_KONSOL.md          # Руководство по консольной версии
+│   ├── README.md                 # О документации
+│   ├── HELP.md                   # Справка пользователя
+│   ├── ПРЕЗЕНТАЦИЯ.md            # Презентация проекта
+│   ├── ПРЕЗЕНТАЦИЯ.pdf           # Презентация (PDF)
 │   ├── PORTABLE_APPS.md          # Портативные версии
-│   ├── СПРАВКА.md                # Справка пользователя
+│   ├── README_KONSOL.md          # Руководство по консольной версии
 │   └── Публичный интерфейс АРШИНА.md
 │
 ├── 📂 App_Linux/                 # Портативная версия для Linux
@@ -106,22 +114,24 @@ python Konsol_Excel/main.py --help
 │   └── run_arshin.bat            # Запуск
 │
 ├── 📂 config/                    # Файлы конфигурации
+│   ├── README.md
 │   ├── exact_queries.csv         # Точные запросы
-│   ├── manufacturers.csv         # Производители
-│   └── README.md
-│
-├── 📂 Konsol/                    # Консольная версия
-│   ├── arshin_app_konsol.py      # Консольное приложение
-│   ├── api_client.py             # API клиент
-│   ├── database.py               # Работа с БД
-│   ├── models.py                 # Модели данных
-│   └── README.md
+│   └── manufacturers.csv         # Производители
 │
 ├── 📂 Konsol_Excel/              # Консольная версия с Excel
 │   ├── main.py                   # Основной скрипт
-│   ├── excel_handler.py          # Обработка Excel
+│   ├── api_client.py             # API клиент
 │   ├── collector.py              # Сбор данных
-│   └── README.md
+│   ├── config.py                 # Конфигурация
+│   ├── database.py               # Работа с БД
+│   ├── excel_handler.py          # Обработка Excel
+│   ├── models.py                 # Модели данных
+│   ├── run.sh                    # Запуск (Linux)
+│   ├── run.bat                   # Запуск (Windows)
+│   ├── README.md
+│   ├── KONSOL_APP.md             # Документация консольной версии
+│   ├── API_DOCUMENTATION.md      # Документация API
+│   └── CHANGELOG_v6.1.md         # История изменений
 │
 ├── 📂 тесты/                     # Тестовые файлы
 │   └── Тестовый запрос_3.xlsx
@@ -129,11 +139,8 @@ python Konsol_Excel/main.py --help
 ├── 📂 exports/                   # Экспортированные файлы
 ├── 📂 logs/                      # Логи приложения
 ├── 📂 venv/                      # Виртуальное окружение
-├── 📂 Картинки/                  # Скриншоты интерфейса
 │
-├── 🗄 arshin_data.db             # База данных SQLite
-├── 🔧 restart.sh                 # Скрипт перезапуска (Linux)
-└── 🔧 restart.bat                # Скрипт перезапуска (Windows)
+└── 🗄 arshin_data.db             # База данных SQLite
 ```
 
 ---
@@ -157,13 +164,13 @@ python Konsol_Excel/main.py --help
 - ✅ Сохранение служебной информации (Id_ПУ, Номер договора, Код ЭДО и т.д.)
 - ✅ 20 колонок в таблице результатов
 
-### Консольная версия (`arshin_app_konsol.py`)
+### Консольная версия (`Konsol_Excel/main.py`)
 
 **Параметры:**
 ```bash
-python arshin_app_konsol.py -f файл.xlsx -y 2020,2021,2022 -o результат.csv
-python arshin_app_konsol.py --stats      # Статистика БД
-python arshin_app_konsol.py --clear      # Очистить БД
+python Konsol_Excel/main.py -f файл.xlsx -y 2020,2021,2022 -o результат.csv
+python Konsol_Excel/main.py --stats      # Статистика БД
+python Konsol_Excel/main.py --clear      # Очистить БД
 ```
 
 **Преимущества:**
@@ -180,11 +187,14 @@ python arshin_app_konsol.py --clear      # Очистить БД
 
 | Файл | Описание |
 |------|----------|
-| `HELP.md` | Справка пользователя (GUI версия) |
-| `ПРЕЗЕНТАЦИЯ.md` | Презентация проекта |
+| `Doc/HELP.md` | Справка пользователя (GUI версия) |
+| `Doc/ПРЕЗЕНТАЦИЯ.md` | Презентация проекта |
 | `Doc/README_KONSOL.md` | Руководство по консольной версии |
 | `Doc/PORTABLE_APPS.md` | Портативные версии (AppImage, EXE) |
 | `Doc/Публичный интерфейс АРШИНА.md` | Документация API ФГИС |
+| `Konsol_Excel/KONSOL_APP.md` | Документация консольной версии |
+| `Konsol_Excel/API_DOCUMENTATION.md` | Документация API |
+| `Konsol_Excel/CHANGELOG_v6.1.md` | История изменений |
 
 ---
 
@@ -193,7 +203,6 @@ python arshin_app_konsol.py --clear      # Очистить БД
 | Версия | Формат | Файл | Платформа |
 |--------|--------|------|-----------|
 | **GUI** | Python | `arshin_app.py` | Linux/Windows |
-| **Console** | Python | `Konsol/arshin_app_konsol.py` | Linux/Windows |
 | **Console+Excel** | Python | `Konsol_Excel/main.py` | Linux/Windows |
 | **Portable** | AppImage | `App_Linux/` | Linux |
 | **Portable** | EXE | `App_Windows/` | Windows |
@@ -201,6 +210,8 @@ python arshin_app_konsol.py --clear      # Очистить БД
 ---
 
 ## 🔧 КОНФИГУРАЦИЯ
+
+Файлы конфигурации находятся в папке `config/`:
 
 ### Файл `config/exact_queries.csv`
 
@@ -222,6 +233,8 @@ keyword,manufacturer,category,priority
 нева,Нева,electric,high
 энергомера,Энергомера,electric,high
 ```
+
+**Подробнее:** См. `config/README.md`
 
 ---
 
@@ -261,9 +274,7 @@ keyword,manufacturer,category,priority
 ```bash
 # Запуск тестового скрипта
 cd тесты
-python test_api_and_export.py
-
-# Результаты сохраняются в exports/
+# Тестовые файлы находятся в папке тесты/
 ```
 
 ---
@@ -274,6 +285,7 @@ python test_api_and_export.py
 2. **Фильтрация:** Автоматически фильтруются только электросчетчики (~15% от всех записей)
 3. **URL записей:** Генерируется из `vri_id`: `https://fgis.gost.ru/fundmetrology/cm/erts/?id={vri_id}`
 4. **Миграция БД:** Не требуется, база пересоздаётся автоматически
+5. **Логи:** Логи консольной версии сохраняются в `Konsol_Excel/arshin_excel_*.log`
 
 ---
 
@@ -281,15 +293,15 @@ python test_api_and_export.py
 
 При возникновении проблем:
 
-1. Проверьте логи в папке `logs/`
-2. Запустите тестовый скрипт в папке `тесты/`
-3. Проверьте доступность API: `curl https://fgis.gost.ru/fundmetrology/eapi/vri`
+1. Проверьте логи в папке `logs/` и `Konsol_Excel/`
+2. Проверьте доступность API: `curl https://fgis.gost.ru/fundmetrology/eapi/vri`
+3. Изучите документацию в папке `Doc/`
 
 ---
 
 ## 📖 ПОМОЩЬ
 
-**Полная документация:** См. файлы в папке `Doc/`
+**Полная документация:** См. файлы в папке `Doc/` и `Konsol_Excel/`
 
 **Содержание:**
 - [О программе](Doc/HELP.md#о-программе)
@@ -301,6 +313,8 @@ python test_api_and_export.py
 - [Вкладка "📊 Статистика"](Doc/HELP.md#вкладка--статистика)
 - [Экспорт данных](Doc/HELP.md#экспорт-данных)
 - [Частые вопросы](Doc/HELP.md#частые-вопросы)
+- [Консольная версия](Konsol_Excel/KONSOL_APP.md)
+- [API документация](Konsol_Excel/API_DOCUMENTATION.md)
 
 **Быстрые ссылки:**
 - [Инструкция по одиночному поиску](Doc/HELP.md#поиск)
@@ -316,6 +330,6 @@ python test_api_and_export.py
 
 ---
 
-**Версия:** 2.13
+**Версия:** 2.14
 **Дата обновления:** 2026-03-23
 **Разработчик:** АРШИН Проект

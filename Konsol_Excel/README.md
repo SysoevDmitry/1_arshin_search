@@ -13,7 +13,7 @@
 ## 📁 Структура
 
 ```
-project/
+arshin_search/
 ├── Konsol_Excel/
 │   ├── config.py         # Конфигурация
 │   ├── models.py         # Модели с ПОЛНОЙ проверкой уникальности

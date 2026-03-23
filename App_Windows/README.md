@@ -124,7 +124,7 @@ start "" "ФГИС_АРШИН.exe"
 ; arshin_installer.nsi
 !include "MUI2.nsh"
 
-Name "ФГИС АРШИН v2.6"
+Name "ФГИС АРШИН v2.14"
 OutFile "ARSHIN_Setup.exe"
 InstallDir "$PROGRAMFILES\ARSHIN"
 RequestExecutionLevel user
@@ -262,5 +262,5 @@ ARSHIN_Portable/
 
 ---
 
-**Версия:** 2.6  
-**Дата:** 2026-03-02
+**Версия:** 2.14
+**Дата:** 2026-03-23
