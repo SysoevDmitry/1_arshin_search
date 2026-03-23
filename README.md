@@ -51,6 +51,13 @@ pip install -r requirements.txt
 ### 2. Запуск GUI версии
 
 ```bash
+# Через скрипт запуска (рекомендуется)
+# Linux:
+./run.sh
+# Windows:
+run.bat
+
+# Или напрямую:
 python arshin_app.py
 ```
 
