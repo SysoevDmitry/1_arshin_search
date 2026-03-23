@@ -1,4 +1,4 @@
-# ФГИС АРШИН - Excel версия v6.0
+# ФГИС АРШИН - Excel версия v6.1
 
 ## 🎯 Назначение
 
@@ -13,25 +13,61 @@
 ## 📁 Структура
 
 ```
-Konsol_Excel/
-├── config.py         # Конфигурация
-├── models.py         # Модели с ПОЛНОЙ проверкой уникальности
-├── database.py       # БД с проверкой по 13 полям
-├── excel_handler.py  # Обработка Excel (авто-определение колонок)
-├── api_client.py     # API клиент с параллельными запросами
-├── collector.py      # Сборщик данных с сохранением связей
-├── main.py           # Главный файл
-├── config/           # Файлы конфигурации
-│   ├── exact_queries.csv
-│   └── manufacturers.csv
-└── exports/          # Экспортированные файлы
+project/
+├── Konsol_Excel/
+│   ├── config.py         # Конфигурация
+│   ├── models.py         # Модели с ПОЛНОЙ проверкой уникальности
+│   ├── database.py       # БД с проверкой по 13 полям
+│   ├── excel_handler.py  # Обработка Excel (авто-определение колонок)
+│   ├── api_client.py     # API клиент с параллельными запросами
+│   ├── collector.py      # Сборщик данных с сохранением связей
+│   ├── main.py           # Главный файл
+│   ├── run.sh            # Скрипт запуска (Linux)
+│   ├── run.bat           # Скрипт запуска (Windows)
+│   ├── config/           # Файлы конфигурации
+│   │   ├── exact_queries.csv
+│   │   └── manufacturers.csv
+│   └── exports/          # Экспортированные файлы
+└── venv/                 # Виртуальное окружение
 ```
 
 ## 🚀 Быстрый старт
 
+### Вариант 1: Через скрипт запуска (рекомендуется)
+
+**Linux:**
 ```bash
+./run.sh --stats
+./run.sh -f запрос.xlsx -y 2020,2021,2022 -o результат.csv
+./run.sh --template шаблон.xlsx
+```
+
+**Windows:**
+```cmd
+run.bat --stats
+run.bat -f запрос.xlsx -y 2020,2021,2022 -o результат.csv
+run.bat --template шаблон.xlsx
+```
+
+Скрипт автоматически:
+- ✅ Проверяет виртуальное окружение
+- ✅ Проверяет и устанавливает зависимости
+- ✅ Запускает приложение
+
+### Вариант 2: Вручную
+
+```bash
+# Перейдите в директорию проекта
+cd project
+
+# Активация виртуального окружения
+# Linux:
+source venv/bin/activate
+# Windows:
+venv\Scripts\activate
+
+# Перейдите в папку Konsol_Excel
 cd Konsol_Excel
-source ../venv/bin/activate
 
 # Создать шаблон Excel
 python main.py --template шаблон.xlsx
@@ -196,6 +232,9 @@ REQUEST_DELAY = 0.2          # Пауза между запросами (сек)
 python main.py -f запрос.xlsx -y 2020-2025 --concurrent 3
 ```
 
+### Ошибки 408 (Request Timeout)
+Автоматически выполняется повторная попытка (до 3 раз).
+
 ### Не определяются колонки
 Проверьте названия колонок в Excel. Поддерживаются:
 - 'серийный номер', 'заводской номер', 'номер пу', 'id_пу'
@@ -204,5 +243,9 @@ python main.py -f запрос.xlsx -y 2020-2025 --concurrent 3
 ## 📝 Зависимости
 
 ```bash
+# Установка зависимостей
 pip install aiohttp tqdm pandas openpyxl
+
+# Или через requirements.txt
+pip install -r ../requirements.txt
 ```
