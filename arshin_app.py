@@ -2,14 +2,16 @@
 # -*- coding: utf-8 -*-
 """
 УНИВЕРСАЛЬНОЕ ПРИЛОЖЕНИЕ ДЛЯ РАБОТЫ С ФГИС АРШИН
-Версия 2.1 - Оптимизированная для 1200x700
+Версия 3.0 — объединение v2.1 + v1.2
 
 Возможности:
-- Быстрый поиск по реестру с использованием файлов конфигурации
+- Атрибутивный поиск (mi_number=, mit_number=) согласно спецификации v.2.2
+- Динамический rate limiting с адаптацией к HTTP 429
 - Пакетная обработка из Excel с сохранением связей
 - Промышленный сбор данных (асинхронный)
 - Расширенное логирование для отладки
 - Экспорт с полной служебной информацией
+- Сохранение всех колонок из Excel (extra_fields)
 """
 
 import os
@@ -106,6 +108,14 @@ class Config:
     RETRY_ATTEMPTS = 3
     RETRY_DELAY = 2
     
+    # Динамический rate limiting
+    RATE_LIMIT_MIN = 0.1       # Минимальная пауза (сек)
+    RATE_LIMIT_MAX = 0.5       # Максимальная пауза (сек)
+    RATE_LIMIT_START = 0.1     # Стартовая пауза
+    RATE_LIMIT_STEP = 0.1      # Шаг изменения
+    RATE_LIMIT_429_COOLDOWN = 10   # Секунды без ошибок для ускорения
+    RATE_LIMIT_ERROR_WINDOW = 60   # Секунды без ошибок для замедления
+    
     # База данных
     DB_PATH = "arshin_data.db"
     
@@ -164,6 +174,61 @@ class Config:
 EXACT_QUERIES = Config.load_exact_queries()
 MANUFACTURERS_RULES = Config.load_manufacturers()
 
+# ============== ДИНАМИЧЕСКИЙ RATE LIMITER ==============
+class DynamicRateLimiter:
+    """
+    Адаптивный контроллер частоты запросов к API.
+    
+    Логика:
+    - Старт с RATE_LIMIT_START (0.1 сек)
+    - При получении 429: увеличивать интервал на STEP до MAX
+    - Если 429 получены 2+ подряд: сразу jump до MAX
+    - Если 10 сек без ошибок: уменьшать на STEP до MIN
+    - Если 60 сек без ошибок: уменьшать на STEP до MIN
+    """
+
+    def __init__(self):
+        self.current_delay = Config.RATE_LIMIT_START
+        self.consecutive_429 = 0
+        self.last_429_time = 0.0
+        self.last_request_time = 0.0
+        self.lock = threading.Lock()
+
+    def wait(self):
+        with self.lock:
+            now = time.time()
+            elapsed = now - self.last_request_time
+            wait_time = max(0, self.current_delay - elapsed)
+        if wait_time > 0:
+            time.sleep(wait_time)
+        with self.lock:
+            self.last_request_time = time.time()
+
+    def on_429(self):
+        with self.lock:
+            self.consecutive_429 += 1
+            self.last_429_time = time.time()
+            if self.consecutive_429 >= 2:
+                self.current_delay = Config.RATE_LIMIT_MAX
+            else:
+                self.current_delay = min(Config.RATE_LIMIT_MAX, self.current_delay + Config.RATE_LIMIT_STEP)
+            logger.warning(f"API 429 — задержка увеличена до {self.current_delay:.2f}с")
+
+    def on_success(self):
+        with self.lock:
+            self.consecutive_429 = 0
+            now = time.time()
+            time_since_429 = now - self.last_429_time
+            if time_since_429 >= Config.RATE_LIMIT_ERROR_WINDOW and self.current_delay > Config.RATE_LIMIT_MIN:
+                self.current_delay = max(Config.RATE_LIMIT_MIN, self.current_delay - Config.RATE_LIMIT_STEP)
+            elif time_since_429 >= Config.RATE_LIMIT_429_COOLDOWN and self.current_delay > Config.RATE_LIMIT_MIN:
+                self.current_delay = max(Config.RATE_LIMIT_MIN, self.current_delay - Config.RATE_LIMIT_STEP)
+
+    @property
+    def delay(self) -> float:
+        with self.lock:
+            return self.current_delay
+
 # ============== МОДЕЛИ ДАННЫХ ==============
 @dataclass
 class VerificationRecord:
@@ -181,6 +246,7 @@ class VerificationRecord:
     applicability: bool = True          # Пригодность
     org_title: str = ""                 # Организация-поверитель
     result_docnum: str = ""             # Номер документа о поверке
+    sticker_num: str = ""               # № наклейки
 
     # Служебные поля (добавляются приложением)
     manufacturer: str = ""              # Определенный производитель
@@ -191,12 +257,15 @@ class VerificationRecord:
     row_index: int = 0                  # Индекс строки в исходном файле
     id_pu: str = ""                     # Id_ПУ из исходного Excel файла
     
-    # Данные из исходного Excel файла (сохраняются для экспорта)
+    # Данные из исходного Excel файла
     contract_number: str = ""           # Номер договора
     edo_code: str = ""                  # Код ЭДО
     balance_owner: str = ""             # Балансовая принадлежность
     operation_responsibility: str = ""  # Эксплуатационная ответственность
-    mpi: str = ""                       # МПИ (межповерочный интервал)
+    mpi: str = ""                       # МПИ
+    
+    # Все дополнительные колонки из Excel (динамические)
+    extra_fields: Dict[str, str] = field(default_factory=dict)
 
     # Статический метод для генерации URL (не хранится в БД)
     @staticmethod
@@ -212,10 +281,11 @@ class VerificationRecord:
     @classmethod
     def from_api_response(cls, data: dict, search_query: str = "",
                           row_index: int = 0, id_pu: str = "",
-                          original_data: dict = None) -> 'VerificationRecord':
+                          original_data: dict = None,
+                          extra_fields: Dict[str, str] = None) -> 'VerificationRecord':
         """Создание записи из ответа API с сохранением связей"""
-        # Извлекаем данные из оригинальной строки Excel
         original = original_data or {}
+        extras = extra_fields or {}
         
         record = cls(
             vri_id=data.get('vri_id', ''),
@@ -229,6 +299,7 @@ class VerificationRecord:
             applicability=data.get('applicability', True),
             org_title=data.get('org_title', ''),
             result_docnum=data.get('result_docnum', ''),
+            sticker_num=data.get('sticker_num', ''),
             search_query=search_query,
             row_index=row_index,
             id_pu=id_pu,
@@ -237,6 +308,7 @@ class VerificationRecord:
             balance_owner=original.get('Балансовая принадлежность', original.get('balance_owner', '')),
             operation_responsibility=original.get('Эксплуатационная ответственность', original.get('operation_responsibility', '')),
             mpi=original.get('МПИ', original.get('mpi', '')),
+            extra_fields=extras,
             collected_at=datetime.now().isoformat()
         )
 
@@ -367,7 +439,11 @@ class VerificationRecord:
     def to_dict(self) -> dict:
         """Преобразование в словарь с полной служебной информацией"""
         result = asdict(self)
-        result['record_url'] = self.record_url  # Добавляем URL (генерируется)
+        result['record_url'] = self.record_url
+        # Распаковка дополнительных колонок из Excel (не перезаписывая основные)
+        for k, v in self.extra_fields.items():
+            if k not in result or not result[k]:
+                result[k] = v
         return result
 
 
@@ -410,10 +486,17 @@ class Database:
                     applicability INTEGER,
                     org_title TEXT,
                     result_docnum TEXT,
+                    sticker_num TEXT,
                     manufacturer TEXT,
                     search_query TEXT,
                     row_index INTEGER,
                     id_pu TEXT,
+                    contract_number TEXT,
+                    edo_code TEXT,
+                    balance_owner TEXT,
+                    operation_responsibility TEXT,
+                    mpi TEXT,
+                    extra_fields TEXT,
                     collected_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
                 )
             ''')
@@ -454,6 +537,7 @@ class Database:
             conn.execute('CREATE INDEX IF NOT EXISTS idx_manufacturer ON verification_records(manufacturer)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_verification_date ON verification_records(verification_date)')
             conn.execute('CREATE INDEX IF NOT EXISTS idx_search_query ON verification_records(search_query)')
+            conn.execute('CREATE INDEX IF NOT EXISTS idx_mi_number ON verification_records(mi_number)')
 
             logger.info("БД инициализирована успешно")
 
@@ -469,7 +553,14 @@ class Database:
         new_columns = [
             ('search_query', 'TEXT'),
             ('row_index', 'INTEGER'),
-            ('id_pu', 'TEXT')
+            ('id_pu', 'TEXT'),
+            ('sticker_num', 'TEXT'),
+            ('contract_number', 'TEXT'),
+            ('edo_code', 'TEXT'),
+            ('balance_owner', 'TEXT'),
+            ('operation_responsibility', 'TEXT'),
+            ('mpi', 'TEXT'),
+            ('extra_fields', 'TEXT')
         ]
 
         for column_name, column_type in new_columns:
@@ -517,6 +608,7 @@ class Database:
                           AND applicability = ?
                           AND org_title = ?
                           AND result_docnum = ?
+                          AND sticker_num = ?
                           AND manufacturer = ?
                           AND search_query = ?
                           AND row_index = ?
@@ -526,6 +618,7 @@ class Database:
                         record.mi_number, record.verification_date, record.valid_date,
                         1 if record.applicability else 0,
                         record.org_title, record.result_docnum,
+                        record.sticker_num,
                         record.manufacturer,
                         record.search_query, record.row_index, record.id_pu
                     ))
@@ -541,17 +634,23 @@ class Database:
                             INSERT OR IGNORE INTO verification_records
                             (vri_id, mit_number, mit_title, mit_notation, mi_modification,
                              mi_number, verification_date, valid_date, applicability,
-                             org_title, result_docnum, manufacturer,
-                             search_query, row_index, id_pu)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                             org_title, result_docnum, sticker_num, manufacturer,
+                             search_query, row_index, id_pu,
+                             contract_number, edo_code, balance_owner,
+                             operation_responsibility, mpi, extra_fields)
+                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                         ''', (
                             record.vri_id, record.mit_number, record.mit_title,
                             record.mit_notation, record.mi_modification, record.mi_number,
                             record.verification_date, record.valid_date,
                             1 if record.applicability else 0,
                             record.org_title, record.result_docnum,
+                            record.sticker_num,
                             record.manufacturer,
-                            record.search_query, record.row_index, record.id_pu
+                            record.search_query, record.row_index, record.id_pu,
+                            record.contract_number, record.edo_code, record.balance_owner,
+                            record.operation_responsibility, record.mpi,
+                            json.dumps(record.extra_fields, ensure_ascii=False) if record.extra_fields else ''
                         ))
 
                         if cursor.rowcount > 0:
@@ -685,14 +784,14 @@ class Database:
 class APIClient:
     """
     Клиент для работы с API ФГИС АРШИН
-    Реализация согласно спецификации внешнего публичного интерфейса
+    v3.0 — атрибутивный поиск, rate limiting, согласно спецификации v.2.2
     """
 
-    def __init__(self):
+    def __init__(self, rate_limiter: 'DynamicRateLimiter' = None):
         self.base_url = Config.API_BASE_URL
         self.session = requests.Session()
+        self.rate_limiter = rate_limiter or DynamicRateLimiter()
         
-        # Заголовки согласно лучшим практикам
         self.session.headers.update({
             'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
             'Accept': 'application/json, text/plain, */*',
@@ -705,91 +804,129 @@ class APIClient:
         
         logger.info(f"APIClient инициализирован: {self.base_url}")
 
-    def search_vri(self, search_term: str = "*", year: Optional[int] = None,
-                   start: int = 0, rows: int = Config.DEFAULT_ROWS,
-                   sort: Optional[str] = None) -> Dict:
+    @staticmethod
+    def encode_search_value(value: str) -> str:
         """
-        Поиск в реестре поверок (VRI - Verification Records Index)
-        
-        Согласно документации API:
-        - GET /vri
-        - Параметры: year, search, sort, start, rows
-        - search: поддерживает маски * и %20 для пробелов
-        - rows: максимум 100
+        Кодирование поискового значения: пробелы → '?', кириллица не кодируется
         """
-        # Валидация параметров согласно спецификации
+        result = value.replace(' ', '?')
+        result = quote(result, safe='*?абвгдеёжзийклмнопрстуфхцчшщъыьэюяАБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ-_.')
+        return result
+
+    def _build_vri_params(self, mi_number: str = None, mit_number: str = None,
+                          search_term: str = None, year: int = None,
+                          start: int = 0, rows: int = Config.DEFAULT_ROWS) -> dict:
+        """
+        Формирование параметров запроса к /vri.
+        Приоритет: атрибутивный поиск (mi_number/mit_number) > search
+        """
         rows = min(rows, Config.MAX_ROWS_PER_REQUEST)
         rows = max(1, rows)
         start = max(0, start)
-        
-        # Кодирование поискового запроса
-        encoded_search = quote(search_term, safe='*')
-        
+
         params = {
-            'search': encoded_search,
             'start': start,
-            'rows': rows
+            'rows': rows,
+            'sort': 'mi_number desc'
         }
-        
+
         if year:
             params['year'] = year
-        
-        if sort:
-            params['sort'] = sort
-        
-        # Формирование URL для логирования
+
+        if mi_number:
+            params['mi_number'] = mi_number
+        elif mit_number:
+            params['mit_number'] = mit_number
+        elif search_term:
+            params['search'] = self.encode_search_value(search_term)
+
+        return params
+
+    def search_vri(self, mi_number: str = None, mit_number: str = None,
+                   search_term: str = None, year: Optional[int] = None,
+                   start: int = 0, rows: int = Config.DEFAULT_ROWS) -> Dict:
+        """
+        Поиск в реестре поверок (VRI) — атрибутивный поиск, rate limiting, retry
+        """
+        params = self._build_vri_params(
+            mi_number=mi_number, mit_number=mit_number,
+            search_term=search_term, year=year, start=start, rows=rows
+        )
+
         query_string = urlencode(params)
         full_url = f"{Config.API_VRI}?{query_string}"
-        
         logger.debug(f"API запрос: GET {full_url}")
-        
-        # Выполнение запроса с повторами
+
+        self.rate_limiter.wait()
+
         for attempt in range(Config.RETRY_ATTEMPTS):
             try:
                 start_time = time.time()
                 response = self.session.get(
-                    Config.API_VRI,
-                    params=params,
-                    timeout=Config.REQUEST_TIMEOUT
+                    Config.API_VRI, params=params, timeout=Config.REQUEST_TIMEOUT
                 )
                 elapsed_ms = int((time.time() - start_time) * 1000)
-                
                 logger.debug(f"Ответ API: статус={response.status_code}, время={elapsed_ms}мс")
-                
+
                 if response.status_code == 200:
+                    self.rate_limiter.on_success()
                     data = response.json()
                     items = data.get('result', {}).get('items', [])
                     total_count = data.get('result', {}).get('count', 0)
-                    
                     logger.debug(f"Получено {len(items)} записей из {total_count}")
                     return data
-                    
+
+                elif response.status_code == 429:
+                    self.rate_limiter.on_429()
+                    logger.warning(f"API 429: Too Many Requests (попытка {attempt+1}/{Config.RETRY_ATTEMPTS})")
+                    time.sleep(self.rate_limiter.delay * 2)
+                    continue
+
+                elif response.status_code == 408:
+                    logger.error(f"API 408: Request Timeout (попытка {attempt+1})")
+                    time.sleep(Config.RETRY_DELAY * (2 ** attempt))
+                    continue
+
                 elif response.status_code == 409:
-                    # Превышено количество страниц (start > 5000)
                     logger.warning(f"API 409: Превышен лимит страниц (start={start})")
                     return {"result": {"items": [], "count": 0}}
-                    
+
                 elif response.status_code == 400:
-                    logger.error(f"API 400: Некорректный запрос - {response.text}")
+                    error_body = self._parse_error_body(response)
+                    logger.error(f"API 400: Bad Request — {error_body}")
                     return {"result": {"items": [], "count": 0, "error": "bad_request"}}
-                    
+
                 else:
-                    logger.warning(f"API ошибка: статус={response.status_code}, текст={response.text[:200]}")
-                    
+                    error_body = self._parse_error_body(response)
+                    logger.warning(f"API ошибка: статус={response.status_code}")
+                    if response.status_code >= 500:
+                        logger.error(f"5XX ошибка: {error_body}")
+
             except requests.Timeout:
                 logger.error(f"Таймаут запроса (попытка {attempt+1}/{Config.RETRY_ATTEMPTS})")
             except requests.ConnectionError as e:
                 logger.error(f"Ошибка соединения (попытка {attempt+1}): {e}")
             except Exception as e:
                 logger.error(f"Неожиданная ошибка (попытка {attempt+1}): {e}")
-            
-            # Пауза перед повтором
+
             if attempt < Config.RETRY_ATTEMPTS - 1:
                 delay = Config.RETRY_DELAY * (2 ** attempt)
-                logger.debug(f"Пауза перед повтором: {delay}с")
                 time.sleep(delay)
-        
+
         return {"result": {"items": [], "count": 0, "error": "max_retries"}}
+
+    def _parse_error_body(self, response) -> dict:
+        """Парсинг тела ошибки API"""
+        try:
+            data = response.json()
+            return {
+                'status': data.get('status', ''),
+                'message': data.get('message', ''),
+                'time': data.get('time', ''),
+                'requestId': data.get('requestId', '')
+            }
+        except Exception:
+            return {'raw': response.text[:500]}
 
     def get_vri_details(self, vri_id: str) -> Dict:
         """
@@ -859,13 +996,14 @@ class APIClient:
 class AsyncCollector:
     """Промышленный асинхронный сборщик данных с расширенным логированием"""
 
-    def __init__(self, db: Database = None):
+    def __init__(self, db: Database = None, rate_limiter: 'DynamicRateLimiter' = None):
         self.db = db or Database()
         self.base_url = Config.API_VRI
         self.session = None
         self.total_collected = 0
         self.is_running = False
         self.stats = {'requests': 0, 'errors': 0, 'found': 0}
+        self.rate_limiter = rate_limiter
         logger.info("AsyncCollector инициализирован")
 
     async def __aenter__(self):
@@ -1374,46 +1512,42 @@ class ExcelHandler:
 
         logger.debug(f"Определение колонок: {list(df.columns)}")
 
-        # Сопоставление полей с колонками - используем лучший матч
+        # Сбор всех кандидатов (поле, колонка, оценка)
+        candidates = []
         for field, keywords in possible_columns.items():
-            best_match = None
-            best_score = 0
-
             for idx, col_lower in enumerate(df_lower):
                 score = 0
                 original_col = df.columns[idx]
 
-                # Полное совпадение - высший приоритет
                 if col_lower == field:
                     score = 100
                 else:
-                    # Проверяем ключевые слова по приоритету
                     for priority, keyword in enumerate(keywords):
                         if keyword == col_lower:
-                            # Точное совпадение с ключевым словом
                             score = max(score, 95 - priority)
                         elif col_lower.startswith(keyword):
-                            # Колонка начинается с ключевого слова
                             score = max(score, 80 - priority)
                         elif keyword in col_lower:
-                            # Ключевое слово содержится в названии колонки
                             score = max(score, 60 - priority)
+                        elif len(keyword) > 4 and keyword[:4] in col_lower:
+                            score = max(score, 40 - priority)
 
-                if score > best_score:
-                    best_score = score
-                    best_match = (original_col, idx)
+                if score > 50:
+                    candidates.append((score, field, original_col, idx))
 
-            # Добавляем только если найден уверенный матч (score > 50)
-            # и эта колонка еще не использована
-            if best_match and best_score > 50:
-                col_name, col_index = best_match
-                # Проверяем, не использована ли уже эта колонка
-                used_cols = [v[0] for v in column_mapping.values()]
-                if col_name not in used_cols:
-                    column_mapping[field] = (col_name, col_index)
-                    logger.debug(f"Найдено: {field} -> {col_name} (индекс {col_index}, score={best_score})")
-                else:
-                    logger.debug(f"Пропущено: {field} -> {col_name} (колонка уже использована)")
+        # Сортировка по убыванию оценки — лучшие совпадения первыми
+        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        # Назначение: каждая колонка и каждое поле — только один раз
+        used_fields = set()
+        used_cols = set()
+        for score, field, col_name, idx in candidates:
+            if field in used_fields or col_name in used_cols:
+                continue
+            column_mapping[field] = (col_name, idx)
+            used_fields.add(field)
+            used_cols.add(col_name)
+            logger.debug(f"✅ Найдено: {field} -> {col_name} (score={score})")
 
         # Если не найдено поле search_term, но есть mi_number - используем его как поисковое
         if 'search_term' not in column_mapping and 'mi_number' in column_mapping:
@@ -1435,7 +1569,7 @@ class ExcelHandler:
             raise ImportError("pandas не установлен")
 
         logger.info(f"Чтение Excel файла: {filename}")
-        df = pd.read_excel(filename)
+        df = pd.read_excel(filename, dtype=str)
         logger.debug(f"Прочитано {len(df)} строк, колонки: {list(df.columns)}")
 
         # Определение колонок
@@ -1456,13 +1590,13 @@ class ExcelHandler:
             # Сохранение всех исходных данных
             for col in df.columns:
                 value = row[col]
-                if pd.notna(value):
+                if value and str(value).lower() != 'nan':
                     query['original_data'][col] = str(value)
             
             # Маппинг полей
             for field, (col_name, _) in column_mapping.items():
                 value = row[col_name]
-                if pd.notna(value):
+                if value and str(value).lower() != 'nan':
                     query[field] = str(value)
             
             if 'search_term' in query or 'mi_number' in query:
@@ -1515,16 +1649,17 @@ class ArshinApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("ФГИС Аршин - Поиск и сбор данных v2.1")
+        self.root.title("ФГИС Аршин - Поиск и сбор данных v3.0")
         self.root.geometry(f"{Config.WINDOW_WIDTH}x{Config.WINDOW_HEIGHT}")
         
         # Минимальные размеры для корректного отображения
         self.root.minsize(1024, 600)
 
         # Инициализация компонентов
+        self.rate_limiter = DynamicRateLimiter()
         self.db = Database()
-        self.api_client = APIClient()
-        self.collector = AsyncCollector(self.db)
+        self.api_client = APIClient(rate_limiter=self.rate_limiter)
+        self.collector = AsyncCollector(self.db, rate_limiter=self.rate_limiter)
 
         # Переменные для пакетного поиска
         self.batch_queries = []
@@ -2243,7 +2378,7 @@ class ArshinApp:
             try:
                 if PANDAS_AVAILABLE:
                     # Чтение файла для предпросмотра
-                    df = pd.read_excel(filename)
+                    df = pd.read_excel(filename, dtype=str)
                     logger.info(f"Прочитано {len(df)} строк, колонки: {list(df.columns)}")
                     
                     # Сохраняем все колонки для динамического отображения
