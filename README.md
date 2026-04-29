@@ -99,16 +99,6 @@ arshin_search/
 │   ├── ПРЕЗЕНТАЦИЯ.md            # Презентация проекта
 │   └── Аршин интерфейсы v.2.2.md # Описание интерфейсов
 │
-├── 📂 App_Linux/                 # Портативная версия для Linux
-│   ├── README.md
-│   ├── build_appimage.sh         # Сборка AppImage
-│   └── run_arshin.sh             # Запуск
-│
-├── 📂 App_Windows/               # Портативная версия для Windows
-│   ├── README.md
-│   ├── build_portable.bat        # Сборка EXE
-│   └── run_arshin.bat            # Запуск
-│
 ├── 📂 config/                    # Файлы конфигурации
 │   ├── README.md
 │   ├── exact_queries.csv         # Точные запросы
@@ -129,9 +119,6 @@ arshin_search/
 │   ├── config/                   # Копия корневого config/
 │   ├── exports/                  # Экспортированные файлы
 │   └── Logs/                     # Логи
-│
-├── 📂 тесты/                     # Тестовые файлы
-│   └── Тестовый запрос_3.xlsx
 │
 ├── 📂 exports/                   # Экспортированные файлы
 ├── 📂 logs/                      # Логи приложения (GUI)
