@@ -101,45 +101,42 @@ class ExcelHandler:
 
         logger.debug(f"Определение колонок: {list(df.columns)}")
 
-        # Сопоставление полей с колонками
+        # Сбор всех кандидатов (поле, колонка, оценка)
+        candidates = []
         for field, keywords in possible_columns.items():
-            best_match = None
-            best_score = 0
-
             for idx, col_lower in enumerate(df_columns):
                 score = 0
                 original_col = df.columns[idx]
 
-                # Полное совпадение - высший приоритет
                 if col_lower == field:
                     score = 100
                 else:
-                    # Проверяем ключевые слова по приоритету
                     for priority, keyword in enumerate(keywords):
-                        # Точное совпадение
                         if keyword == col_lower:
                             score = max(score, 95 - priority)
-                        # Совпадение начала
                         elif col_lower.startswith(keyword):
                             score = max(score, 80 - priority)
-                        # Содержит ключевое слово
                         elif keyword in col_lower:
                             score = max(score, 60 - priority)
-                        # Частичное совпадение (для коротких слов)
                         elif len(keyword) > 4 and keyword[:4] in col_lower:
                             score = max(score, 40 - priority)
 
-                if score > best_score:
-                    best_score = score
-                    best_match = (original_col, idx)
+                if score > 40:
+                    candidates.append((score, field, original_col, idx))
 
-            # Добавляем только если найден уверенный матч (score > 40)
-            if best_match and best_score > 40:
-                col_name, col_index = best_match
-                used_cols = [v[0] for v in column_mapping.values()]
-                if col_name not in used_cols:
-                    column_mapping[field] = (col_name, col_index)
-                    logger.debug(f"✅ Найдено: {field} -> {col_name} (score={best_score})")
+        # Сортировка по убыванию оценки — лучшие совпадения первыми
+        candidates.sort(key=lambda x: x[0], reverse=True)
+
+        # Назначение колонок: каждая колонка и каждое поле — только один раз
+        used_fields = set()
+        used_cols = set()
+        for score, field, col_name, idx in candidates:
+            if field in used_fields or col_name in used_cols:
+                continue
+            column_mapping[field] = (col_name, idx)
+            used_fields.add(field)
+            used_cols.add(col_name)
+            logger.debug(f"✅ Найдено: {field} -> {col_name} (score={score})")
 
         # Если не найдено mi_number или mit_title, пробуем найти любые подходящие колонки
         if 'mi_number' not in column_mapping:
@@ -156,7 +153,8 @@ class ExcelHandler:
                     logger.debug(f"✅ mit_title найдена по ключу: {df.columns[idx]}")
                     break
 
-        logger.info(f"Автоматически определено колонок: {len(column_mapping)}")
+        logger.info(f"Автоматически определено колонок: {len(column_mapping)}: "
+                    f"{', '.join(f'{f}→{c}' for f, (c, _) in column_mapping.items())}")
         return column_mapping
     
     @staticmethod
@@ -177,15 +175,16 @@ class ExcelHandler:
         logger.info(f"📂 Чтение Excel файла: {filename}")
         
         # Сначала читаем первую строку для проверки
-        df_check = pd.read_excel(filename, nrows=1)
+        # dtype=str сохраняет ведущие нули в серийных номерах
+        df_check = pd.read_excel(filename, nrows=1, dtype=str)
         
         # Если первая строка содержит Unnamed, значит заголовки во второй строке (индекс 1)
         first_col = str(df_check.columns[0]) if len(df_check.columns) > 0 else ""
         if first_col.startswith('Unnamed'):
             logger.info("ℹ️  Заголовки найдены во второй строке (пропуск первой строки)")
-            df = pd.read_excel(filename, header=1)
+            df = pd.read_excel(filename, header=1, dtype=str)
         else:
-            df = pd.read_excel(filename)
+            df = pd.read_excel(filename, dtype=str)
         
         logger.debug(f"Прочитано {len(df)} строк, колонки: {list(df.columns)}")
         
@@ -207,13 +206,13 @@ class ExcelHandler:
             # Сохранение всех исходных данных
             for col in df.columns:
                 value = row[col]
-                if pd.notna(value):
+                if value and str(value).lower() != 'nan':
                     query['original_data'][col] = str(value)
             
             # Маппинг полей
             for field, (col_name, _) in column_mapping.items():
                 value = row[col_name]
-                if pd.notna(value):
+                if value and str(value).lower() != 'nan':
                     query[field] = str(value)
             
             # Добавляем если есть поисковый термин или серийный номер

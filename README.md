@@ -1,7 +1,7 @@
 # 🔍 ФГИС АРШИН — Приложение для работы с реестром поверок
 
-**Версия:** 2.14
-**Дата:** 23 марта 2026 г.
+**Версия:** 2.15
+**Дата:** 29 апреля 2026 г.
 **Платформы:** Linux, Windows (GUI + Console)
 
 ---
@@ -91,6 +91,7 @@ arshin_search/
 ├── 📄 arshin_app.py              # GUI приложение (Tkinter)
 ├── 📄 requirements.txt           # Зависимости Python
 ├── 📄 README.md                  # Этот файл
+├── 📄 AGENTS.md                  # Инструкция для AI-агентов
 ├── 📄 run.sh                     # Запуск GUI (Linux)
 ├── 📄 run.bat                    # Запуск GUI (Windows)
 │
@@ -127,17 +128,18 @@ arshin_search/
 │   ├── excel_handler.py          # Обработка Excel
 │   ├── models.py                 # Модели данных
 │   ├── run.sh                    # Запуск (Linux)
-│   ├── run.bat                   # Запуск (Windows)
 │   ├── README.md
 │   ├── KONSOL_APP.md             # Документация консольной версии
-│   ├── API_DOCUMENTATION.md      # Документация API
-│   └── CHANGELOG_v6.1.md         # История изменений
+│   ├── CHANGELOG_v6.1.md         # История изменений
+│   ├── config/                   # Копия корневого config/
+│   ├── exports/                  # Экспортированные файлы
+│   └── Logs/                     # Логи
 │
 ├── 📂 тесты/                     # Тестовые файлы
 │   └── Тестовый запрос_3.xlsx
 │
 ├── 📂 exports/                   # Экспортированные файлы
-├── 📂 logs/                      # Логи приложения
+├── 📂 logs/                      # Логи приложения (GUI)
 ├── 📂 venv/                      # Виртуальное окружение
 │
 └── 🗄 arshin_data.db             # База данных SQLite
@@ -173,11 +175,16 @@ python Konsol_Excel/main.py --stats      # Статистика БД
 python Konsol_Excel/main.py --clear      # Очистить БД
 ```
 
-**Преимущества:**
+**Возможности (v6.2):**
 - ✅ Работа через SSH/терминал
 - ✅ Не требует GUI/X11
 - ✅ Поддержка tmux/screen для фоновой работы
 - ✅ Автоматизация через cron
+- ✅ Сохранение ведущих нулей в серийных номерах
+- ✅ Учёт года выпуска прибора (поиск от года выпуска)
+- ✅ Запрос очистки/добавления перед поиском
+- ✅ Автосохранение результатов в `exports/`
+- ✅ Логи в `Logs/`
 
 ---
 
@@ -192,8 +199,8 @@ python Konsol_Excel/main.py --clear      # Очистить БД
 | `Doc/README_KONSOL.md` | Руководство по консольной версии |
 | `Doc/PORTABLE_APPS.md` | Портативные версии (AppImage, EXE) |
 | `Doc/Публичный интерфейс АРШИНА.md` | Документация API ФГИС |
+| `AGENTS.md` | Инструкция для AI-агентов |
 | `Konsol_Excel/KONSOL_APP.md` | Документация консольной версии |
-| `Konsol_Excel/API_DOCUMENTATION.md` | Документация API |
 | `Konsol_Excel/CHANGELOG_v6.1.md` | История изменений |
 
 ---
@@ -203,7 +210,7 @@ python Konsol_Excel/main.py --clear      # Очистить БД
 | Версия | Формат | Файл | Платформа |
 |--------|--------|------|-----------|
 | **GUI** | Python | `arshin_app.py` | Linux/Windows |
-| **Console+Excel** | Python | `Konsol_Excel/main.py` | Linux/Windows |
+| **Console+Excel** | Python (v6.2) | `Konsol_Excel/main.py` | Linux/Windows |
 | **Portable** | AppImage | `App_Linux/` | Linux |
 | **Portable** | EXE | `App_Windows/` | Windows |
 
@@ -330,6 +337,6 @@ cd тесты
 
 ---
 
-**Версия:** 2.14
-**Дата обновления:** 2026-03-23
+**Версия:** 2.15
+**Дата обновления:** 2026-04-29
 **Разработчик:** АРШИН Проект

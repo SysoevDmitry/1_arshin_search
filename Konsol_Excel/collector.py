@@ -48,8 +48,12 @@ def match_serial_number(record_serial: str, target_serial: str) -> bool:
     norm_record = normalize_serial_number(record_serial)
     norm_target = normalize_serial_number(target_serial)
     
-    # Точное совпадение
-    return norm_record == norm_target
+    if norm_record == norm_target:
+        return True
+    
+    # Совпадение без ведущих нулей
+    # (Excel/API могут различаться: "023241147596" vs "23241147596")
+    return norm_record.lstrip('0') == norm_target.lstrip('0')
 
 
 def load_electric_phrases_from_queries() -> tuple:
@@ -199,6 +203,32 @@ class ExcelCollector:
         await self.api.__aexit__(*args)
         if self.pbar:
             self.pbar.close()
+
+    @staticmethod
+    def _adjust_years_for_query(query: Dict, years: List[int]) -> List[int]:
+        """
+        Корректировка диапазона годов по году выпуска прибора.
+        Если в строке Excel указан год выпуска — поиск идёт от года выпуска
+        до последнего года из диапазона (или до текущего).
+        """
+        manufacture_year_str = query.get('manufacture_year', '')
+        if not manufacture_year_str or manufacture_year_str.lower() == 'nan':
+            return years
+
+        try:
+            mfg_year = int(float(manufacture_year_str))
+        except (ValueError, TypeError):
+            return years
+
+        from datetime import datetime
+        current_year = datetime.now().year
+        max_year = max(years) if years else current_year
+
+        start_year = max(mfg_year, min(years) if years else mfg_year)
+        if start_year > max_year:
+            return [start_year]
+
+        return [y for y in years if y >= start_year]
 
     async def process_query(self, serial_number: str, years: List[int],
                             row_index: int = 0, id_pu: str = "",
@@ -416,9 +446,18 @@ class ExcelCollector:
             id_pu = query.get('id_pu', '')
             original_data = query.get('original_data', {})
 
+            # Корректировка годов поиска по году выпуска прибора
+            query_years = self._adjust_years_for_query(query, years)
+
+            if query_years != years:
+                mfg_year = query.get('manufacture_year', '')
+                logger.info(f"  📅 Строка {row_index}: год выпуска {mfg_year}, "
+                           f"поиск {min(query_years)}–{max(query_years)} "
+                           f"(из диапазона {min(years)}–{max(years)})")
+
             # Обработка запроса с новыми параметрами
             found = await self.process_query(
-                serial_number, years,
+                serial_number, query_years,
                 row_index=row_index,
                 id_pu=id_pu,
                 original_data=original_data,
@@ -427,7 +466,8 @@ class ExcelCollector:
             )
 
             serial_short = serial_number[:20] + '...' if len(serial_number) > 20 else serial_number
-            logger.info(f"[{i+1}/{total_queries}] '{serial_short}' → {found} записей")
+            year_range = f"{min(query_years)}–{max(query_years)}" if not verification_date else verification_date
+            logger.info(f"[{i+1}/{total_queries}] '{serial_short}' ({year_range}) → {found} записей")
 
             if self.pbar:
                 self.pbar.update(1)

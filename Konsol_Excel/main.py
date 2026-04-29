@@ -43,13 +43,15 @@ from collector import ExcelCollector
 from api_client import ParallelAPIClient
 
 # Логирование
+LOG_DIR = "Logs"
+os.makedirs(LOG_DIR, exist_ok=True)
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     handlers=[
         logging.StreamHandler(),
         logging.FileHandler(
-            f"arshin_excel_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log",
+            os.path.join(LOG_DIR, f"arshin_excel_{datetime.now().strftime('%Y%m%d_%H%M%S')}.log"),
             encoding='utf-8'
         )
     ]
@@ -105,6 +107,61 @@ def print_stats(stats: dict, db_stats: dict):
     print("="*70 + "\n")
 
 
+def prepare_output_path(output: str) -> str:
+    """
+    Формирование имени выходного файла с датой и номером.
+    Результат сохраняется в папку exports/ (создаётся автоматически).
+    Если файл существует — добавляет дату впереди и/или номер по порядку.
+    
+    Примеры:
+        результат.csv → exports/результат.csv (если не существует)
+        результат.csv → exports/20260429_результат.csv (если существует)
+        20260429_результат.csv → exports/20260429_результат_1.csv (если существует)
+    """
+    import os
+    from datetime import datetime
+    
+    # Если путь без папки — сохраняем в exports/
+    directory = os.path.dirname(output)
+    if not directory:
+        directory = "exports"
+        output = os.path.join(directory, output)
+    
+    os.makedirs(directory, exist_ok=True)
+    
+    if not os.path.exists(output):
+        return output
+    
+    # Разбираем путь
+    basename = os.path.basename(output)
+    name, ext = os.path.splitext(basename)
+    today = datetime.now().strftime('%Y%m%d')
+    
+    # Если имя уже начинается с даты — добавляем номер
+    if name.startswith(today):
+        counter = 1
+        while True:
+            new_name = f"{name}_{counter}{ext}"
+            new_path = os.path.join(directory, new_name)
+            if not os.path.exists(new_path):
+                return new_path
+            counter += 1
+    else:
+        # Добавляем дату в начало
+        new_name = f"{today}_{name}{ext}"
+        new_path = os.path.join(directory, new_name)
+        if not os.path.exists(new_path):
+            return new_path
+        # Если и с датой существует — добавляем номер
+        counter = 1
+        while True:
+            numbered_name = f"{today}_{name}_{counter}{ext}"
+            numbered_path = os.path.join(directory, numbered_name)
+            if not os.path.exists(numbered_path):
+                return numbered_path
+            counter += 1
+
+
 async def run_excel_search(filename: str, years: List[int], output: Optional[str],
                             verification_date: str = None,
                             use_attribute_search: bool = True):
@@ -155,6 +212,7 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
 
         # Экспорт
         if output:
+            output = prepare_output_path(output)
             print(f"📤 Экспорт в {output}...")
             count = db.export_to_csv(output)
             print(f"✅ Экспортировано {count} записей")
@@ -284,6 +342,20 @@ def main():
     # Парсинг годов
     years = parse_years(args.years)
     print(f"📋 Выбрано годов: {len(years)} ({min(years)}-{max(years)})")
+
+    # Вопрос об очистке БД перед поиском
+    db_check = Database()
+    existing_count = db_check.get_stats().get('total', 0)
+    if existing_count > 0:
+        print(f"\n📊 В базе уже есть {existing_count} записей")
+        print("  очистить / yes — удалить все записи и начать заново")
+        print("  добавить / no  — добавить новые записи к существующим")
+        answer = input("🗑  Ваш выбор: ").strip().lower()
+        if answer in ('очистить', 'clear', 'y', 'yes', 'да', '1'):
+            db_check.clear()
+            print("✅ БД очищена")
+        else:
+            print("📥 Новые записи будут добавлены к существующим")
 
     # Запуск поиска
     asyncio.run(run_excel_search(
