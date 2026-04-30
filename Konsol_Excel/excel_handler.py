@@ -214,6 +214,9 @@ class ExcelHandler:
                 value = row[col_name]
                 if value and str(value).lower() != 'nan':
                     query[field] = str(value)
+                    # Дублируем в original_data под именем поля
+                    # (from_api ищет по field-имени, а не по сырому имени колонки)
+                    query['original_data'][field] = str(value)
             
             # Добавляем если есть поисковый термин или серийный номер
             if 'search_term' in query or 'mi_number' in query:

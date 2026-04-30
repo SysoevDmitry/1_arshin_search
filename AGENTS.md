@@ -48,6 +48,8 @@ source venv/bin/activate
 cd Konsol_Excel && ./run.sh --stats
 cd Konsol_Excel && python main.py -f запрос.xlsx -y 2020-2025 -o результат.csv
 cd Konsol_Excel && python main.py --template шаблон.xlsx
+cd Konsol_Excel && python main.py -f запрос.xlsx --resume  # продолжить после сбоя
+cd Konsol_Excel && python main.py --export-only результат.csv  # только экспорт БД
 ```
 
 Скрипты `run.sh`/`run.bat` автоматически проверяют и устанавливают зависимости.
@@ -59,12 +61,25 @@ cd Konsol_Excel && python main.py --template шаблон.xlsx
 - Фильтрация результатов API: только электросчётчики (функция `is_electric_meter_from_queries`), точное совпадение серийного номера (`match_serial_number`)
 - Параллелизм через `asyncio.Semaphore`, по умолчанию 5, меняется через `--concurrent N` (3–10)
 - Retry на ошибки 429/502/408 с экспоненциальной задержкой
+- **v6.2**: Сохранение прогресса после каждого запроса в таблице `search_progress`. При повторном запуске с тем же файлом — диалог продолжения (пропуск обработанных строк).
+
+## Продолжение после сбоя (v6.2)
+
+- Прогресс сохраняется в таблице `search_progress` (SQLite) после каждого успешно обработанного запроса
+- При запуске с тем же Excel-файлом программа обнаруживает прогресс и предлагает продолжить
+- Флаги:
+  - `--resume` — принудительно продолжить, без диалога
+  - `--no-resume` — игнорировать прогресс, начать заново
+  - `--export-only CSV` — только экспорт существующей БД в CSV (без поиска)
+- При успешном завершении прогресс автоматически очищается
+- Если файл изменился (другое количество запросов) — выводится предупреждение
 
 ## API
 
 - URL: `https://fgis.gost.ru/fundmetrology/eapi/vri`
 - Параметры: `search`, `year`, `verification_date`, `start`, `rows`, + атрибутивные фильтры (`mi_number`, `mit_number`, ...)
 - v6.1 поддерживает атрибутивный поиск (`--attribute-search`) и `--verification-date`
+- v6.2 добавляет сохранение прогресса (`--resume`, `--no-resume`, `--export-only`)
 
 ## База данных
 

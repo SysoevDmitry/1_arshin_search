@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """
 ФГИС АРШИН - Excel версия с параллельными запросами
-Версия 6.1 - Поддержка атрибутивного поиска и verification_date
+Версия 6.2 - Поддержка продолжения после сбоя и экспорт БД
 
 Возможности:
 - Пакетная обработка Excel файлов
@@ -16,6 +16,8 @@
 - Получение записей по vri_id
 - Обработка 408 Request Timeout
 - Детализированное логирование 5XX ошибок
+- ПРОДОЛЖЕНИЕ ПОСЛЕ СБОЯ (сохранение прогресса)
+- ЭКСПОРТ БД без повторного поиска (--export-only)
 
 Запуск:
     python main.py -f запрос.xlsx -y 2020-2025 -o результат.csv
@@ -23,6 +25,8 @@
     python main.py --template шаблон.xlsx
     python main.py --stats
     python main.py --get-record vri_id
+    python main.py --export-only результат.csv      # экспорт без поиска
+    python main.py -f запрос.xlsx --resume           # продолжить после сбоя
 """
 
 import os
@@ -164,7 +168,8 @@ def prepare_output_path(output: str) -> str:
 
 async def run_excel_search(filename: str, years: List[int], output: Optional[str],
                             verification_date: str = None,
-                            use_attribute_search: bool = True):
+                            use_attribute_search: bool = True,
+                            resume: Optional[bool] = None):
     """Поиск по Excel файлу
 
     Args:
@@ -173,6 +178,7 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
         output: Путь для экспорта CSV
         verification_date: Конкретная дата поверки (вместо year)
         use_attribute_search: Использовать атрибутивный поиск
+        resume: True — принудительно продолжить, False — начать заново, None — спросить
     """
     print(f"\n📂 Чтение файла: {filename}")
 
@@ -199,12 +205,55 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
 
     # Обработка
     db = Database()
+    start_from = 0
 
-    async with ExcelCollector(db) as collector:
+    # Проверка прогресса предыдущего запуска
+    progress = db.get_progress(filename)
+    if progress:
+        last_idx = progress['last_processed_index']
+        prev_total = progress['total_queries']
+        prev_params = progress.get('params', '')
+
+        print(f"\n📌 Обнаружен прогресс предыдущего запуска:")
+        print(f"   Обработано: {last_idx + 1} из {prev_total} запросов")
+        print(f"   Параметры: {prev_params}")
+        print(f"   Всего запросов сейчас: {len(queries)}")
+
+        if prev_total != len(queries):
+            print("⚠️  Количество запросов изменилось с прошлого раза!")
+            if resume is None:
+                print("   Продолжение с изменённым файлом небезопасно")
+                answer = input("   Продолжить с последнего индекса? (y/n): ").strip().lower()
+                if answer in ('y', 'yes', 'да', '1'):
+                    start_from = last_idx + 1
+                else:
+                    db.clear_progress(filename)
+        else:
+            if resume is None:
+                # Диалог с пользователем
+                print(f"\n🔄 Продолжить с индекса {last_idx + 1}?")
+                print("   y/yes/да  — продолжить (пропустить обработанные запросы)")
+                print("   n/no/нет  — начать заново (удалить прогресс)")
+                answer = input("   Ваш выбор: ").strip().lower()
+                if answer in ('y', 'yes', 'да', '1', ''):
+                    start_from = last_idx + 1
+                    print(f"✅ Продолжаем с индекса {start_from}")
+                else:
+                    db.clear_progress(filename)
+                    print("🔄 Начинаем заново")
+            elif resume:
+                start_from = last_idx + 1
+                print(f"✅ Принудительное продолжение с индекса {start_from}")
+            else:
+                db.clear_progress(filename)
+                print("🔄 Принудительный старт заново")
+
+    async with ExcelCollector(db, input_file=filename) as collector:
         stats = await collector.process_queries_batch(
             queries, years,
             verification_date=verification_date,
-            use_attribute_search=use_attribute_search
+            use_attribute_search=use_attribute_search,
+            start_from=start_from
         )
         db_stats = db.get_stats()
 
@@ -274,6 +323,13 @@ def main():
     parser.add_argument('--concurrent', type=int, default=5,
                         help='Кол-во одновременных запросов (3-10)')
 
+    parser.add_argument('--resume', action='store_true',
+                        help='Принудительно продолжить с места предыдущего сбоя')
+    parser.add_argument('--no-resume', action='store_true',
+                        help='Игнорировать прогресс, начать заново')
+    parser.add_argument('--export-only', type=str, metavar='CSV',
+                        help='Только экспорт существующей БД в CSV (без поиска)')
+
     args = parser.parse_args()
 
     # Заголовок
@@ -334,6 +390,20 @@ def main():
             print(f"✅ Шаблон создан: {filename}")
         return
 
+    # Только экспорт БД (без поиска)
+    if args.export_only:
+        db = Database()
+        stats = db.get_stats()
+        print(f"\n📊 В базе данных {stats['total']} записей")
+        if stats['total'] > 0:
+            output = prepare_output_path(args.export_only)
+            print(f"📤 Экспорт в {output}...")
+            count = db.export_to_csv(output)
+            print(f"✅ Экспортировано {count} записей")
+        else:
+            print("❌ Нет данных для экспорта")
+        return
+
     # Файл обязателен
     if not args.file:
         parser.print_help()
@@ -346,22 +416,42 @@ def main():
     # Вопрос об очистке БД перед поиском
     db_check = Database()
     existing_count = db_check.get_stats().get('total', 0)
+    resume_flag = args.resume
+
+    # Если есть прогресс, но флаг --no-resume — очищаем старый прогресс
+    if args.no_resume:
+        db_check.clear_progress(args.file)
+        print("🔄 Прогресс сброшен, начинаем заново")
+
     if existing_count > 0:
         print(f"\n📊 В базе уже есть {existing_count} записей")
-        print("  очистить / yes — удалить все записи и начать заново")
-        print("  добавить / no  — добавить новые записи к существующим")
-        answer = input("🗑  Ваш выбор: ").strip().lower()
-        if answer in ('очистить', 'clear', 'y', 'yes', 'да', '1'):
-            db_check.clear()
-            print("✅ БД очищена")
+        # Если --resume или обнаружен прогресс — не предлагаем очистку
+        progress = db_check.get_progress(args.file) if not args.no_resume else None
+        if progress or args.resume:
+            print("📥 Режим продолжения — существующие записи сохраняются")
         else:
-            print("📥 Новые записи будут добавлены к существующим")
+            print("  очистить / yes — удалить все записи и начать заново")
+            print("  добавить / no  — добавить новые записи к существующим")
+            answer = input("🗑  Ваш выбор: ").strip().lower()
+            if answer in ('очистить', 'clear', 'y', 'yes', 'да', '1'):
+                db_check.clear()
+                print("✅ БД очищена")
+            else:
+                print("📥 Новые записи будут добавлены к существующим")
 
     # Запуск поиска
+    if args.resume:
+        resume_flag = True
+    elif args.no_resume:
+        resume_flag = False
+    else:
+        resume_flag = None
+
     asyncio.run(run_excel_search(
         args.file, years, args.output,
         verification_date=args.verification_date,
-        use_attribute_search=args.attribute_search
+        use_attribute_search=args.attribute_search,
+        resume=resume_flag
     ))
 
 

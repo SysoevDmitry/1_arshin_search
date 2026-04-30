@@ -26,6 +26,16 @@ class Database:
     def _init_db(self):
         """Инициализация таблиц БД с полной структурой как в arshin_app.py"""
         with sqlite3.connect(self.db_path) as conn:
+            # Таблица прогресса поиска (для возможности продолжения после сбоя)
+            conn.execute('''
+                CREATE TABLE IF NOT EXISTS search_progress (
+                    input_file TEXT PRIMARY KEY,
+                    last_processed_index INTEGER,
+                    total_queries INTEGER,
+                    params TEXT,
+                    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                )
+            ''')
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS verification_records (
                     -- Основные данные из API
@@ -278,9 +288,48 @@ class Database:
             logger.info(f"📤 Экспортировано {len(rows)} записей в {filename}")
             return len(rows)
     
+    def save_progress(self, input_file: str, last_index: int, total_queries: int, params: str = ""):
+        """Сохранить прогресс обработки файла"""
+        import os
+        abs_path = os.path.abspath(input_file)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.execute('''
+                INSERT OR REPLACE INTO search_progress
+                (input_file, last_processed_index, total_queries, params, updated_at)
+                VALUES (?, ?, ?, ?, datetime('now', 'localtime'))
+            ''', (abs_path, last_index, total_queries, params))
+            conn.commit()
+
+    def get_progress(self, input_file: str) -> dict:
+        """Получить прогресс обработки файла. Возвращает None если прогресса нет."""
+        import os
+        abs_path = os.path.abspath(input_file)
+        with sqlite3.connect(self.db_path) as conn:
+            conn.row_factory = sqlite3.Row
+            cursor = conn.execute(
+                'SELECT * FROM search_progress WHERE input_file = ?',
+                (abs_path,)
+            )
+            row = cursor.fetchone()
+            if row:
+                return dict(row)
+            return None
+
+    def clear_progress(self, input_file: str = None):
+        """Очистить прогресс обработки (конкретного файла или весь)"""
+        with sqlite3.connect(self.db_path) as conn:
+            if input_file:
+                import os
+                abs_path = os.path.abspath(input_file)
+                conn.execute('DELETE FROM search_progress WHERE input_file = ?', (abs_path,))
+            else:
+                conn.execute('DELETE FROM search_progress')
+            conn.commit()
+
     def clear(self):
         """Очистка БД"""
         with sqlite3.connect(self.db_path) as conn:
             conn.execute('DELETE FROM verification_records')
+            conn.execute('DELETE FROM search_progress')
             conn.commit()
         logger.info("🧹 База данных очищена")

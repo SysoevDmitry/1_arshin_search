@@ -14,23 +14,31 @@ echo "======================================================================"
 echo "🔍 ФГИС АРШИН - Konsol_Excel v6.1"
 echo "======================================================================"
 
-# Проверка виртуального окружения
+# Поиск системного Python
+SYSTEM_PYTHON=""
+if command -v python3 &> /dev/null; then
+    SYSTEM_PYTHON="python3"
+elif command -v python &> /dev/null; then
+    SYSTEM_PYTHON="python"
+else
+    echo "❌ Python не найден. Установите Python 3.8+"
+    exit 1
+fi
+
+# Проверка и создание виртуального окружения
 if [ -d "$VENV_DIR" ] && [ -f "$VENV_PYTHON" ]; then
     echo "✅ Виртуальное окружение найдено: $VENV_DIR"
-    PYTHON="$VENV_PYTHON"
 else
     echo "⚠️  Виртуальное окружение не найдено: $VENV_DIR"
-    echo "📦 Попытка использовать системный Python..."
-    
-    if command -v python3 &> /dev/null; then
-        PYTHON="python3"
-    elif command -v python &> /dev/null; then
-        PYTHON="python"
-    else
-        echo "❌ Python не найден. Установите Python 3.8+"
-        exit 1
-    fi
+    echo "📦 Создание виртуального окружения..."
+    $SYSTEM_PYTHON -m venv "$VENV_DIR"
+    echo "✅ Виртуальное окружение создано"
 fi
+
+# Активация виртуального окружения
+PYTHON="$VENV_PYTHON"
+source "$VENV_DIR/bin/activate"
+echo "✅ Виртуальное окружение активировано"
 
 # Проверка зависимостей в venv
 echo "🔍 Проверка зависимостей..."

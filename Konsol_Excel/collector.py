@@ -181,10 +181,12 @@ class ExcelCollector:
     4. Сохранение с привязкой к данным из Excel (Id_ПУ, № строки)
     """
 
-    def __init__(self, db: Database = None):
+    def __init__(self, db: Database = None, input_file: str = None):
         self.db = db or Database()
         self.api: Optional[ParallelAPIClient] = None
         self.pbar = None
+        self.input_file = input_file
+        self.save_progress_params = ""
         self.stats = {
             'queries_processed': 0,
             'records_found': 0,
@@ -406,7 +408,8 @@ class ExcelCollector:
     async def process_queries_batch(self, queries: List[Dict], years: List[int],
                                      batch_size: int = 5,
                                      verification_date: str = None,
-                                     use_attribute_search: bool = True) -> Dict:
+                                     use_attribute_search: bool = True,
+                                     start_from: int = 0) -> Dict:
         """
         Пакетная обработка запросов
 
@@ -416,6 +419,7 @@ class ExcelCollector:
             batch_size: Размер пакета для параллельной обработки
             verification_date: Дата поверки (вместо year)
             use_attribute_search: Использовать атрибутивный поиск
+            start_from: Индекс, с которого начать обработку (для продолжения после сбоя)
 
         Returns:
             Статистика обработки
@@ -423,21 +427,39 @@ class ExcelCollector:
         total_queries = len(queries)
 
         if verification_date:
-            logger.info(f"🔍 Обработка {total_queries} запросов на дату {verification_date}")
+            logger.info(f"🔍 Обработка {total_queries} запросов на дату {verification_date}"
+                       + (f" (с индекса {start_from})" if start_from > 0 else ""))
         else:
-            logger.info(f"🔍 Обработка {total_queries} запросов за {len(years)} годов")
+            logger.info(f"🔍 Обработка {total_queries} запросов за {len(years)} годов"
+                       + (f" (с индекса {start_from})" if start_from > 0 else ""))
 
         # Progress bar
         if TQDM_AVAILABLE:
-            self.pbar = tqdm(total=total_queries, desc="Запросы", unit="запрос")
+            self.pbar = tqdm(total=total_queries, initial=start_from,
+                           desc="Запросы", unit="запрос")
 
         # Обработка запросов
         for i, query in enumerate(queries):
+            # Пропуск уже обработанных запросов (при продолжении после сбоя)
+            if i < start_from:
+                if self.pbar:
+                    self.pbar.update(1)
+                continue
+
             # Серийный номер - основное поле для поиска
             serial_number = query.get('mi_number', '')
 
             if not serial_number or serial_number.lower() == 'nan':
                 logger.debug(f"⏭  Пропущено (нет серийного номера), строка {query.get('row_index', i+1)}")
+                # Сохраняем прогресс даже для пропущенных запросов
+                if self.input_file:
+                    self.save_progress_params = self._build_progress_params(
+                        years, verification_date, use_attribute_search
+                    )
+                    self.db.save_progress(
+                        self.input_file, i, total_queries,
+                        self.save_progress_params
+                    )
                 if self.pbar:
                     self.pbar.update(1)
                 continue
@@ -469,6 +491,16 @@ class ExcelCollector:
             year_range = f"{min(query_years)}–{max(query_years)}" if not verification_date else verification_date
             logger.info(f"[{i+1}/{total_queries}] '{serial_short}' ({year_range}) → {found} записей")
 
+            # Сохранение прогресса после каждого успешно обработанного запроса
+            if self.input_file:
+                self.save_progress_params = self._build_progress_params(
+                    years, verification_date, use_attribute_search
+                )
+                self.db.save_progress(
+                    self.input_file, i, total_queries,
+                    self.save_progress_params
+                )
+
             if self.pbar:
                 self.pbar.update(1)
                 self.pbar.set_postfix({
@@ -479,7 +511,19 @@ class ExcelCollector:
         if self.pbar:
             self.pbar.close()
 
+        # Очистка прогресса после успешного завершения
+        if self.input_file:
+            self.db.clear_progress(self.input_file)
+
         return self.stats
+
+    @staticmethod
+    def _build_progress_params(years: List[int], verification_date: str,
+                               use_attribute_search: bool) -> str:
+        """Формирование строки параметров для сохранения в прогрессе"""
+        if verification_date:
+            return f"date={verification_date},attr={use_attribute_search}"
+        return f"years={min(years)}-{max(years)},attr={use_attribute_search}"
 
     def get_stats(self) -> Dict:
         """Получить статистику обработки"""
