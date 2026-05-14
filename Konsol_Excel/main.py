@@ -2,22 +2,24 @@
 # -*- coding: utf-8 -*-
 """
 ФГИС АРШИН - Excel версия с параллельными запросами
-Версия 6.2 - Поддержка продолжения после сбоя и экспорт БД
+Версия 6.3 — Объединённая: UPSERT + DB-прогресс + --export-only
 
 Возможности:
 - Пакетная обработка Excel файлов
 - Параллельные запросы к API
+- UPSERT (INSERT OR REPLACE) — перезапись существующих записей
+- Надёжное продолжение после сбоя (DB-прогресс)
 - Сохранение связей (Id_ПУ, № строки, данные из файла)
-- Проверка на ПОЛНУЮ уникальность (как в arshin_app.py)
+- Проверка на ПОЛНУЮ уникальность
 - Автоматическое определение колонок
 - Экспорт с русскими заголовками
-- АТРИБУТИВНЫЙ ПОИСК (рекомендуется спецификацией)
+- Атрибутивный поиск (рекомендуется спецификацией)
 - Поддержка verification_date (конкретная дата поверки)
 - Получение записей по vri_id
 - Обработка 408 Request Timeout
 - Детализированное логирование 5XX ошибок
-- ПРОДОЛЖЕНИЕ ПОСЛЕ СБОЯ (сохранение прогресса)
-- ЭКСПОРТ БД без повторного поиска (--export-only)
+- Экспорт БД без повторного поиска (--export-only)
+- Гибкое управление продолжением (--resume / --no-resume / диалог)
 
 Запуск:
     python main.py -f запрос.xlsx -y 2020-2025 -o результат.csv
@@ -27,6 +29,7 @@
     python main.py --get-record vri_id
     python main.py --export-only результат.csv      # экспорт без поиска
     python main.py -f запрос.xlsx --resume           # продолжить после сбоя
+    python main.py -f запрос.xlsx --no-resume        # начать заново
 """
 
 import os
@@ -64,7 +67,6 @@ logger = logging.getLogger(__name__)
 
 
 def parse_years(years_str: str) -> List[int]:
-    """Парсинг годов: 2020,2021,2022 или 2020-2025"""
     years = []
     for y in years_str.split(','):
         y = y.strip()
@@ -77,15 +79,14 @@ def parse_years(years_str: str) -> List[int]:
 
 
 def print_stats(stats: dict, db_stats: dict):
-    """Вывод статистики обработки"""
     print("\n" + "="*70)
     print("📊 СТАТИСТИКА ОБРАБОТКИ")
     print("="*70)
     print(f"   Запросов обработано: {stats.get('queries_processed', 0)}")
     print(f"   Найдено записей: {stats.get('records_found', 0)}")
-    print(f"   Сохранено: {stats.get('records_saved', 0)}")
-    print(f"   Пропущено дублей: {stats.get('duplicates', 0)}")
-    print(f"   Отфильтровано (не электросчетчики): {stats.get('filtered', 0)}")
+    print(f"   Сохранено новых: {stats.get('records_saved', 0)}")
+    print(f"   Обновлено: {stats.get('updated', 0)}")
+    print(f"   Отфильтровано (не электросчетчики): {stats.get('filtered_not_electric', 0)}")
     
     print("\n" + "="*70)
     print("📊 СТАТИСТИКА БАЗЫ ДАННЫХ")
@@ -112,20 +113,9 @@ def print_stats(stats: dict, db_stats: dict):
 
 
 def prepare_output_path(output: str) -> str:
-    """
-    Формирование имени выходного файла с датой и номером.
-    Результат сохраняется в папку exports/ (создаётся автоматически).
-    Если файл существует — добавляет дату впереди и/или номер по порядку.
-    
-    Примеры:
-        результат.csv → exports/результат.csv (если не существует)
-        результат.csv → exports/20260429_результат.csv (если существует)
-        20260429_результат.csv → exports/20260429_результат_1.csv (если существует)
-    """
     import os
     from datetime import datetime
     
-    # Если путь без папки — сохраняем в exports/
     directory = os.path.dirname(output)
     if not directory:
         directory = "exports"
@@ -136,12 +126,10 @@ def prepare_output_path(output: str) -> str:
     if not os.path.exists(output):
         return output
     
-    # Разбираем путь
     basename = os.path.basename(output)
     name, ext = os.path.splitext(basename)
     today = datetime.now().strftime('%Y%m%d')
     
-    # Если имя уже начинается с даты — добавляем номер
     if name.startswith(today):
         counter = 1
         while True:
@@ -151,12 +139,10 @@ def prepare_output_path(output: str) -> str:
                 return new_path
             counter += 1
     else:
-        # Добавляем дату в начало
         new_name = f"{today}_{name}{ext}"
         new_path = os.path.join(directory, new_name)
         if not os.path.exists(new_path):
             return new_path
-        # Если и с датой существует — добавляем номер
         counter = 1
         while True:
             numbered_name = f"{today}_{name}_{counter}{ext}"
@@ -166,27 +152,22 @@ def prepare_output_path(output: str) -> str:
             counter += 1
 
 
+def auto_output_name() -> str:
+    today = datetime.now().strftime('%Y%m%d')
+    base = f"{today}_export.csv"
+    return prepare_output_path(os.path.join("exports", base))
+
+
 async def run_excel_search(filename: str, years: List[int], output: Optional[str],
                             verification_date: str = None,
                             use_attribute_search: bool = True,
                             resume: Optional[bool] = None):
-    """Поиск по Excel файлу
-
-    Args:
-        filename: Путь к Excel файлу
-        years: Список годов для поиска
-        output: Путь для экспорта CSV
-        verification_date: Конкретная дата поверки (вместо year)
-        use_attribute_search: Использовать атрибутивный поиск
-        resume: True — принудительно продолжить, False — начать заново, None — спросить
-    """
     print(f"\n📂 Чтение файла: {filename}")
 
     if not os.path.exists(filename):
         print(f"❌ Файл не найден: {filename}")
         return
 
-    # Чтение запросов
     queries = ExcelHandler.read_queries(filename)
 
     if not queries:
@@ -203,7 +184,6 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
     print(f"🚀 Параллельных запросов: {Config.MAX_CONCURRENT_REQUESTS}")
     print(f"🔍 Атрибутивный поиск: {'включен' if use_attribute_search else 'выключен'}")
 
-    # Обработка
     db = Database()
     start_from = 0
 
@@ -230,10 +210,9 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
                     db.clear_progress(filename)
         else:
             if resume is None:
-                # Диалог с пользователем
                 print(f"\n🔄 Продолжить с индекса {last_idx + 1}?")
-                print("   y/yes/да  — продолжить (пропустить обработанные запросы)")
-                print("   n/no/нет  — начать заново (удалить прогресс)")
+                print("   y/yes/да/Enter — продолжить (пропустить обработанные запросы)")
+                print("   n/no/нет       — начать заново (удалить прогресс)")
                 answer = input("   Ваш выбор: ").strip().lower()
                 if answer in ('y', 'yes', 'да', '1', ''):
                     start_from = last_idx + 1
@@ -247,6 +226,19 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
             else:
                 db.clear_progress(filename)
                 print("🔄 Принудительный старт заново")
+    else:
+        # Нет прогресса — спрашиваем про очистку БД только если в ней есть записи
+        existing_count = db.get_stats().get('total', 0)
+        if existing_count > 0 and resume is None:
+            print(f"\n📊 В базе уже есть {existing_count} записей (предыдущий прогресс не найден)")
+            print("  очистить / yes — удалить все записи и начать заново")
+            print("  добавить / no  — добавить/обновить записи (UPSERT)")
+            answer = input("🗑  Ваш выбор: ").strip().lower()
+            if answer in ('очистить', 'clear', 'y', 'yes', 'да', '1'):
+                db.clear()
+                print("✅ БД очищена")
+            else:
+                print("📥 Записи будут добавлены/обновлены (UPSERT)")
 
     async with ExcelCollector(db, input_file=filename) as collector:
         stats = await collector.process_queries_batch(
@@ -259,43 +251,50 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
 
         print_stats(stats, db_stats)
 
-        # Экспорт
         if output:
             output = prepare_output_path(output)
-            print(f"📤 Экспорт в {output}...")
-            count = db.export_to_csv(output)
-            print(f"✅ Экспортировано {count} записей")
+        else:
+            output = auto_output_name()
+        print(f"📤 Экспорт в {output}...")
+        count = db.export_to_csv(output)
+        print(f"✅ Экспортировано {count} записей")
 
 
 def main():
     parser = argparse.ArgumentParser(
-        description='ФГИС АРШИН - Excel версия v6.1',
+        description='ФГИС АРШИН - Excel версия v6.3 (объединённая)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Примеры:
-  # Поиск по Excel файлу (по годам)
-  %(prog)s -f запрос.xlsx -y 2020,2021,2022 -o результат.csv
+  # Через скрипт запуска (рекомендуется)
+  ./run.sh -f запрос.xlsx -y 2020,2021,2022 -o результат.csv
+
+  # Через python (без скрипта)
+  python %(prog)s -f запрос.xlsx -y 2020,2021,2022 -o результат.csv
 
   # Поиск по диапазону годов
-  %(prog)s -f данные.xlsx -y 2020-2025 -o export.csv
+  ./run.sh -f данные.xlsx -y 2020-2025 -o export.csv
+
+  # Без -o — автоимя (20260514_export.csv)
+  ./run.sh -f запрос.xlsx -y 2020-2025 --attribute-search
 
   # Поиск по конкретной дате поверки
-  %(prog)s -f данные.xlsx --verification-date 2024-05-15 -o export.csv
+  ./run.sh -f данные.xlsx --verification-date 2024-05-15 -o export.csv
 
   # Атрибутивный поиск (рекомендуется спецификацией)
-  %(prog)s -f запрос.xlsx -y 2024 --attribute-search
+  ./run.sh -f запрос.xlsx -y 2024 --attribute-search
 
-  # Получить запись по vri_id
-  %(prog)s --get-record 2-162158132
+  # Возобновление после сбоя
+  ./run.sh -f запрос.xlsx -y 2020-2025 --resume
 
   # Создать шаблон Excel
-  %(prog)s --template шаблон.xlsx
+  ./run.sh --template шаблон.xlsx
 
   # Статистика БД
-  %(prog)s --stats
+  ./run.sh --stats
 
   # Очистить БД
-  %(prog)s --clear
+  ./run.sh --clear
         '''
     )
 
@@ -304,7 +303,7 @@ def main():
     parser.add_argument('-y', '--years', type=str, default='2020-2025',
                         help='Годы поиска (2020,2021 или 2020-2025)')
     parser.add_argument('-o', '--output', type=str,
-                        help='Экспорт в CSV')
+                        help='Экспорт в CSV (если не указан, имя генерируется автоматически)')
 
     parser.add_argument('--verification-date', type=str,
                         help='Дата поверки (yyyy-MM-dd), приоритет над --years')
@@ -332,9 +331,8 @@ def main():
 
     args = parser.parse_args()
 
-    # Заголовок
     print("\n" + "="*70)
-    print("🔍 ФГИС АРШИН - Excel версия v6.1")
+    print("🔍 ФГИС АРШИН - Excel версия v6.3 (объединённая: UPSERT + DB-прогресс)")
     print("="*70)
     print(f"📅 Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🚀 Параллельных запросов: {args.concurrent}")
@@ -346,15 +344,12 @@ def main():
         print(f"🔍 Атрибутивный поиск: включен")
     print("="*70)
 
-    # Проверка библиотек
     if not PANDAS_AVAILABLE:
         print("❌ pandas не установлен: pip install pandas openpyxl")
         return
 
-    # Настройка параллелизма
     Config.MAX_CONCURRENT_REQUESTS = min(max(args.concurrent, 1), 10)
 
-    # Получение записи по vri_id
     if args.get_record:
         async def get_record():
             async with ParallelAPIClient() as client:
@@ -368,14 +363,12 @@ def main():
         asyncio.run(get_record())
         return
 
-    # Статистика
     if args.stats:
         db = Database()
         stats = db.get_stats()
         print_stats({}, stats)
         return
 
-    # Очистка
     if args.clear:
         if input("⚠️  Очистить БД? (yes/no): ").lower() == 'yes':
             db = Database()
@@ -383,14 +376,12 @@ def main():
             print("✅ БД очищена")
         return
 
-    # Создание шаблона
     if args.template:
         filename = ExcelHandler.create_template(args.template)
         if filename:
             print(f"✅ Шаблон создан: {filename}")
         return
 
-    # Только экспорт БД (без поиска)
     if args.export_only:
         db = Database()
         stats = db.get_stats()
@@ -404,42 +395,18 @@ def main():
             print("❌ Нет данных для экспорта")
         return
 
-    # Файл обязателен
     if not args.file:
         parser.print_help()
         return
 
-    # Парсинг годов
     years = parse_years(args.years)
     print(f"📋 Выбрано годов: {len(years)} ({min(years)}-{max(years)})")
 
-    # Вопрос об очистке БД перед поиском
-    db_check = Database()
-    existing_count = db_check.get_stats().get('total', 0)
-    resume_flag = args.resume
-
-    # Если есть прогресс, но флаг --no-resume — очищаем старый прогресс
     if args.no_resume:
+        db_check = Database()
         db_check.clear_progress(args.file)
         print("🔄 Прогресс сброшен, начинаем заново")
 
-    if existing_count > 0:
-        print(f"\n📊 В базе уже есть {existing_count} записей")
-        # Если --resume или обнаружен прогресс — не предлагаем очистку
-        progress = db_check.get_progress(args.file) if not args.no_resume else None
-        if progress or args.resume:
-            print("📥 Режим продолжения — существующие записи сохраняются")
-        else:
-            print("  очистить / yes — удалить все записи и начать заново")
-            print("  добавить / no  — добавить новые записи к существующим")
-            answer = input("🗑  Ваш выбор: ").strip().lower()
-            if answer in ('очистить', 'clear', 'y', 'yes', 'да', '1'):
-                db_check.clear()
-                print("✅ БД очищена")
-            else:
-                print("📥 Новые записи будут добавлены к существующим")
-
-    # Запуск поиска
     if args.resume:
         resume_flag = True
     elif args.no_resume:
@@ -447,12 +414,34 @@ def main():
     else:
         resume_flag = None
 
-    asyncio.run(run_excel_search(
-        args.file, years, args.output,
-        verification_date=args.verification_date,
-        use_attribute_search=args.attribute_search,
-        resume=resume_flag
-    ))
+    try:
+        asyncio.run(run_excel_search(
+            args.file, years, args.output,
+            verification_date=args.verification_date,
+            use_attribute_search=args.attribute_search,
+            resume=resume_flag
+        ))
+    except KeyboardInterrupt:
+        print("\n\n⚠️  Прервано пользователем (Ctrl+C)")
+        print("📥 Сохраняем собранные данные...\n")
+
+        db = Database()
+        db_stats = db.get_stats()
+
+        print(f"📊 Собрано записей в БД: {db_stats.get('total', 0)}")
+
+        if db_stats.get('total', 0) > 0:
+            if args.output:
+                output_path = prepare_output_path(args.output)
+            else:
+                output_path = auto_output_name()
+            print(f"📤 Экспорт в {output_path}...")
+            count = db.export_to_csv(output_path)
+            print(f"✅ Экспортировано {count} записей")
+        else:
+            print("⚠️  Нет данных для сохранения")
+
+        print("\n👋 Завершение работы.")
 
 
 if __name__ == '__main__':

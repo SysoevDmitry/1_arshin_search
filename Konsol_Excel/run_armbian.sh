@@ -9,14 +9,14 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON=""
 
 echo "======================================================================"
-echo "🔍 ФГИС АРШИН - Konsol_Excel v6.1 (Armbian/ARM, системный Python)"
+echo "🔍 ФГИС АРШИН - Konsol_Excel v6.3 (Armbian/ARM, системный Python)"
 echo "======================================================================"
 
 # Проверка архитектуры
 ARCH=$(uname -m)
 echo "🖥  Архитектура: $ARCH"
 
-# Проверка свободного места (минимум 500 МБ)
+# Проверка свободного места (минимум 200 МБ)
 AVAIL_KB=$(df --output=avail "$SCRIPT_DIR" 2>/dev/null | tail -1)
 AVAIL_MB=$((AVAIL_KB / 1024))
 echo "💾 Свободно на диске: ${AVAIL_MB} МБ"
@@ -25,34 +25,27 @@ if [ "$AVAIL_MB" -lt 200 ]; then
     exit 1
 fi
 
-# Установка системных зависимостей через apt (Armbian = Debian-based)
+# Установка системных зависимостей через apt
 echo "📦 Проверка и установка системных зависимостей..."
 APT_DEPS="python3-pip"
-
-# Пакеты, которые ставим через apt (предсобранные для ARM, не требуют компиляции)
 APT_PY_DEPS=()
 
-# pandas — тяжёлый, лучше из apt
 if ! python3 -c "import pandas" 2>/dev/null; then
     APT_PY_DEPS+=("python3-pandas")
 fi
 
-# openpyxl — есть в apt
 if ! python3 -c "import openpyxl" 2>/dev/null; then
     APT_PY_DEPS+=("python3-openpyxl")
 fi
 
-# requests — есть в apt
 if ! python3 -c "import requests" 2>/dev/null; then
     APT_PY_DEPS+=("python3-requests")
 fi
 
-# numpy — нужен для pandas, есть в apt
 if ! python3 -c "import numpy" 2>/dev/null; then
     APT_PY_DEPS+=("python3-numpy")
 fi
 
-# Устанавливаем всё скопом через apt
 ALL_APT="$APT_DEPS ${APT_PY_DEPS[*]}"
 if [ -n "$APT_PY_DEPS" ] || ! dpkg -s python3-pip &>/dev/null; then
     echo "⚠️  Установка через apt: $ALL_APT"
@@ -107,4 +100,10 @@ echo "🚀 Запуск приложения..."
 echo "======================================================================"
 
 cd "$SCRIPT_DIR"
+
+# Если первый аргумент — имя python-скрипта, пропускаем его
+if [ "$1" = "main.py" ] || [ "$1" = "app.py" ]; then
+    shift
+fi
+
 exec $PYTHON main.py "$@"

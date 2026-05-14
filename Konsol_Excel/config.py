@@ -22,7 +22,7 @@ class Config:
     REQUEST_TIMEOUT = 30
     
     # Параллелизм
-    MAX_CONCURRENT_REQUESTS = 5  # Более консервативно для точных запросов
+    MAX_CONCURRENT_REQUESTS = 5
     REQUEST_DELAY = 0.2  # Пауза между запросами (сек)
     
     # База данных

@@ -2,7 +2,10 @@
 # -*- coding: utf-8 -*-
 """
 База данных для Excel версии
-С ПРОВЕРКОЙ НА ПОЛНУЮ УНИКАЛЬНОСТЬ как в arshin_app.py
+Объединённая версия:
+- Таблица search_progress для надёжного продолжения после сбоя (из v6.2)
+- INSERT OR REPLACE (upsert) — перезапись существующих записей (из v6.1)
+- Сохранение оригинального collected_at при обновлении
 """
 
 import sqlite3
@@ -24,9 +27,9 @@ class Database:
         self._init_db()
     
     def _init_db(self):
-        """Инициализация таблиц БД с полной структурой как в arshin_app.py"""
+        """Инициализация таблиц БД"""
         with sqlite3.connect(self.db_path) as conn:
-            # Таблица прогресса поиска (для возможности продолжения после сбоя)
+            # Таблица прогресса поиска (для продолжения после сбоя)
             conn.execute('''
                 CREATE TABLE IF NOT EXISTS search_progress (
                     input_file TEXT PRIMARY KEY,
@@ -89,10 +92,7 @@ class Database:
         return ids
     
     def is_duplicate(self, record: VerificationRecord, conn: sqlite3.Connection) -> bool:
-        """
-        Проверка на ПОЛНЫЙ дубль (все основные + служебные поля)
-        Адаптировано из arshin_app.py
-        """
+        """Проверка на ПОЛНЫЙ дубль"""
         cursor = conn.cursor()
         cursor.execute('''
             SELECT COUNT(*) FROM verification_records
@@ -122,65 +122,71 @@ class Database:
     
     def save_records_batch(self, records: List[VerificationRecord]) -> dict:
         """
-        Пакетное сохранение с проверкой на полную уникальность
-        Адаптировано из arshin_app.py
-        
+        Пакетное сохранение с UPSERT (INSERT OR REPLACE).
+        Если запись с таким vri_id уже существует — перезаписывается свежими данными,
+        но сохраняется оригинальное время collected_at.
+
         Returns:
-            dict со статистикой: {'saved': int, 'duplicates': int, 'errors': int}
+            dict со статистикой: {'saved': int, 'updated': int, 'duplicates': int, 'errors': int}
         """
         if not records:
-            return {'saved': 0, 'duplicates': 0, 'errors': 0}
-        
+            return {'saved': 0, 'updated': 0, 'duplicates': 0, 'errors': 0}
+
         saved = 0
+        updated = 0
         duplicates = 0
         errors = 0
-        
+
         conn = sqlite3.connect(self.db_path)
         try:
             for record in records:
                 try:
-                    # Проверка на полный дубль
-                    if self.is_duplicate(record, conn):
-                        duplicates += 1
-                        logger.debug(f"⚠️  Пропущен дубль: vri_id={record.vri_id}, "
-                                   f"query={record.search_query}, row={record.row_index}")
+                    existing = conn.execute(
+                        'SELECT COUNT(*) FROM verification_records WHERE vri_id = ?',
+                        (record.vri_id,)
+                    ).fetchone()[0]
+
+                    conn.execute('''
+                        INSERT OR REPLACE INTO verification_records
+                        (vri_id, mit_number, mit_title, mit_notation, mi_modification,
+                         mi_number, verification_date, valid_date, applicability,
+                         org_title, result_docnum, manufacturer,
+                         search_query, row_index, id_pu,
+                         contract_number, edo_code, balance_owner,
+                         operation_responsibility, mpi,
+                         collected_at)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?,
+                                COALESCE((SELECT collected_at FROM verification_records WHERE vri_id = ?),
+                                         CURRENT_TIMESTAMP))
+                    ''', (
+                        record.vri_id, record.mit_number, record.mit_title,
+                        record.mit_notation, record.mi_modification, record.mi_number,
+                        record.verification_date, record.valid_date,
+                        1 if record.applicability else 0,
+                        record.org_title, record.result_docnum,
+                        record.manufacturer,
+                        record.search_query, record.row_index, record.id_pu,
+                        record.contract_number, record.edo_code, record.balance_owner,
+                        record.operation_responsibility, record.mpi,
+                        record.vri_id
+                    ))
+
+                    if existing == 0:
+                        saved += 1
                     else:
-                        # Вставка новой записи
-                        conn.execute('''
-                            INSERT OR IGNORE INTO verification_records
-                            (vri_id, mit_number, mit_title, mit_notation, mi_modification,
-                             mi_number, verification_date, valid_date, applicability,
-                             org_title, result_docnum, manufacturer,
-                             search_query, row_index, id_pu,
-                             contract_number, edo_code, balance_owner,
-                             operation_responsibility, mpi)
-                            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                        ''', (
-                            record.vri_id, record.mit_number, record.mit_title,
-                            record.mit_notation, record.mi_modification, record.mi_number,
-                            record.verification_date, record.valid_date,
-                            1 if record.applicability else 0,
-                            record.org_title, record.result_docnum,
-                            record.manufacturer,
-                            record.search_query, record.row_index, record.id_pu,
-                            record.contract_number, record.edo_code, record.balance_owner,
-                            record.operation_responsibility, record.mpi
-                        ))
-                        
-                        if conn.total_changes > 0:
-                            saved += 1
-                            
+                        updated += 1
+
                 except Exception as e:
                     errors += 1
                     logger.error(f"❌ Ошибка сохранения {record.vri_id}: {e}")
-            
+
             conn.commit()
-            
+
         finally:
             conn.close()
-        
-        logger.info(f"💾 Сохранено: {saved} новых, {duplicates} дубликатов, {errors} ошибок")
-        return {'saved': saved, 'duplicates': duplicates, 'errors': errors}
+
+        logger.info(f"💾 Сохранено: {saved} новых, {updated} обновлено, {errors} ошибок")
+        return {'saved': saved, 'updated': updated, 'duplicates': duplicates, 'errors': errors}
     
     def get_stats(self) -> Dict:
         """Получить детальную статистику"""
@@ -196,21 +202,17 @@ class Database:
                     'inapplicable': 0
                 }
             
-            # Статистика по годам
-            # Дата в формате DD.MM.YYYY, извлекаем год через substr
             by_year = dict(conn.execute(
                 "SELECT substr(verification_date, 7, 4) as year, COUNT(*) "
                 "FROM verification_records WHERE verification_date != '' "
                 "GROUP BY year ORDER BY year"
             ).fetchall())
             
-            # Статистика по производителям
             by_manufacturer = dict(conn.execute(
                 'SELECT manufacturer, COUNT(*) FROM verification_records '
                 'GROUP BY manufacturer ORDER BY COUNT(*) DESC LIMIT 10'
             ).fetchall())
             
-            # Статистика по пригодности
             applicable = conn.execute(
                 'SELECT COUNT(*) FROM verification_records WHERE applicability = 1'
             ).fetchone()[0]
@@ -247,7 +249,6 @@ class Database:
                 logger.warning("⚠️  Нет данных для экспорта")
                 return 0
             
-            # Русские заголовки
             field_mapping = {
                 'vri_id': 'ID',
                 'mit_number': '№ реестра',
@@ -274,13 +275,10 @@ class Database:
             }
             
             with open(filename, 'w', encoding='utf-8-sig', newline='') as f:
-                # QUOTE_ALL - все поля в кавычках для корректной обработки
-                # Но переносы строк внутри полей заменяем на пробелы
                 writer = csv.writer(f, delimiter=';', quoting=csv.QUOTE_ALL, lineterminator='\n')
                 headers = [field_mapping.get(col, col) for col in columns]
                 writer.writerow(headers)
                 
-                # Обработка строк: замена переносов на пробелы
                 for row in rows:
                     cleaned_row = [str(v).replace('\n', ' ').replace('\r', ' ') if v else '' for v in row]
                     writer.writerow(cleaned_row)

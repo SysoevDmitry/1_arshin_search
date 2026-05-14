@@ -20,13 +20,6 @@ class ExcelHandler:
     
     @staticmethod
     def detect_columns(df) -> Dict[str, Tuple[str, int]]:
-        """
-        Автоматическое определение колонок по заголовкам
-        Адаптировано из arshin_app.py
-
-        Returns:
-            Dict[field_name: Tuple[column_name, column_index]]
-        """
         if not PANDAS_AVAILABLE:
             logger.error("pandas не установлен")
             return {}
@@ -35,9 +28,7 @@ class ExcelHandler:
         
         column_mapping = {}
 
-        # Расширенные возможные названия колонок
         possible_columns = {
-            # Серийный/заводской номер прибора - ГЛАВНАЯ для поиска
             'mi_number': [
                 'серийный номер', 'заводской номер', 'номер пу', 'серийный номер пу',
                 'зав. номер', 'зав №', 'serial number', 'device_number',
@@ -45,44 +36,36 @@ class ExcelHandler:
                 'номер пу', 'прибор', 'счетчик', 'измеритель', 'id',
                 'номер прибора', 'серийник'
             ],
-            # Наименование/модель прибора - для поиска по названию
             'mit_title': [
                 'модель', 'model', 'наименование типа', 'тип прибора', 'тип пу',
                 'наименование', 'название', 'name', 'тип си', 'устройство',
                 'описание', 'прибор', 'наименование си', 'тип', 'модель прибора',
                 'наименование прибора', 'тип си', 'название прибора'
             ],
-            # Номер в реестре типов СИ
             'mit_number': [
                 'номер в реестре', 'реестровый номер', 'рег. номер', 'регистр',
                 'номер типа', 'mit_number', 'vri_id', 'реестр', 'тип си номер'
             ],
-            # Организация-поверитель
             'org_title': [
                 'организация поверитель', 'поверитель', 'организация', 'org_title',
                 'org', 'кто поверял', 'поверка', 'company', 'предприятие'
             ],
-            # Идентификатор записи VRI
             'vri_id': [
                 'vri_id', 'vri', 'идентификатор', 'уникальный', 'uuid',
                 'ключ', 'key', 'id записи'
             ],
-            # Поисковый запрос (универсальное поле)
             'search_term': [
                 'поисковый запрос', 'ключевое слово', 'поиск', 'query', 'запрос',
                 'search', 'термин', 'ключ'
             ],
-            # Год поверки
             'year': [
                 'год поверки', 'поверка год', 'год поверки си', 'verification year',
                 'год', 'year', 'дата поверки'
             ],
-            # Год выпуска прибора
             'manufacture_year': [
                 'год выпуска', 'год производства', 'год изготовления', 'дата выпуска',
                 'выпуск', 'manufacture', 'production year'
             ],
-            # Дополнительные поля для связей
             'id_pu': ['id_пу', 'id пу', 'идентификатор пу'],
             'contract_number': ['номер договора', 'договор', 'contract', 'номер док'],
             'edo_code': ['код эдо', 'эдо', 'edo', 'edo код'],
@@ -91,17 +74,14 @@ class ExcelHandler:
             'mpi': ['мпи', 'межповерочный интервал', 'интервал', 'мпИ']
         }
 
-        # Преобразуем названия колонок в нижний регистр для сравнения
         df_columns = []
         for col in df.columns:
             col_str = str(col).lower().strip()
-            # Удаляем лишние пробелы и символы
             col_str = ' '.join(col_str.split())
             df_columns.append(col_str)
 
         logger.debug(f"Определение колонок: {list(df.columns)}")
 
-        # Сбор всех кандидатов (поле, колонка, оценка)
         candidates = []
         for field, keywords in possible_columns.items():
             for idx, col_lower in enumerate(df_columns):
@@ -124,10 +104,8 @@ class ExcelHandler:
                 if score > 40:
                     candidates.append((score, field, original_col, idx))
 
-        # Сортировка по убыванию оценки — лучшие совпадения первыми
         candidates.sort(key=lambda x: x[0], reverse=True)
 
-        # Назначение колонок: каждая колонка и каждое поле — только один раз
         used_fields = set()
         used_cols = set()
         for score, field, col_name, idx in candidates:
@@ -138,7 +116,6 @@ class ExcelHandler:
             used_cols.add(col_name)
             logger.debug(f"✅ Найдено: {field} -> {col_name} (score={score})")
 
-        # Если не найдено mi_number или mit_title, пробуем найти любые подходящие колонки
         if 'mi_number' not in column_mapping:
             for idx, col_lower in enumerate(df_columns):
                 if any(k in col_lower for k in ['серийн', 'завод', 'номер', 'serial']):
@@ -159,13 +136,6 @@ class ExcelHandler:
     
     @staticmethod
     def read_queries(filename: str) -> List[Dict]:
-        """
-        Чтение запросов из Excel с сохранением исходных связей
-        Адаптировано из arshin_app.py
-
-        Returns:
-            Список словарей с полями + row_index + original_data
-        """
         if not PANDAS_AVAILABLE:
             logger.error("pandas не установлен")
             raise ImportError("pandas не установлен")
@@ -174,11 +144,8 @@ class ExcelHandler:
 
         logger.info(f"📂 Чтение Excel файла: {filename}")
         
-        # Сначала читаем первую строку для проверки
-        # dtype=str сохраняет ведущие нули в серийных номерах
         df_check = pd.read_excel(filename, nrows=1, dtype=str)
         
-        # Если первая строка содержит Unnamed, значит заголовки во второй строке (индекс 1)
         first_col = str(df_check.columns[0]) if len(df_check.columns) > 0 else ""
         if first_col.startswith('Unnamed'):
             logger.info("ℹ️  Заголовки найдены во второй строке (пропуск первой строки)")
@@ -188,10 +155,8 @@ class ExcelHandler:
         
         logger.debug(f"Прочитано {len(df)} строк, колонки: {list(df.columns)}")
         
-        # Определение колонок
         column_mapping = ExcelHandler.detect_columns(df)
         
-        # Если не удалось определить, используем первую колонку как search_term
         if not column_mapping:
             logger.warning("⚠️  Колонки не определены, используется первая колонка")
             column_mapping = {'search_term': (df.columns[0], 0)}
@@ -199,17 +164,15 @@ class ExcelHandler:
         queries = []
         for idx, row in df.iterrows():
             query = {
-                'row_index': idx + 1,  # Индекс строки (1-based)
-                'original_data': {},   # Исходные данные строки
+                'row_index': idx + 1,
+                'original_data': {},
             }
             
-            # Сохранение всех исходных данных
             for col in df.columns:
                 value = row[col]
                 if value and str(value).lower() != 'nan':
                     query['original_data'][col] = str(value)
             
-            # Маппинг полей
             for field, (col_name, _) in column_mapping.items():
                 value = row[col_name]
                 if value and str(value).lower() != 'nan':
@@ -218,7 +181,6 @@ class ExcelHandler:
                     # (from_api ищет по field-имени, а не по сырому имени колонки)
                     query['original_data'][field] = str(value)
             
-            # Добавляем если есть поисковый термин или серийный номер
             if 'search_term' in query or 'mi_number' in query:
                 queries.append(query)
         
@@ -227,7 +189,6 @@ class ExcelHandler:
     
     @staticmethod
     def create_template(filename: str = None) -> str:
-        """Создание шаблона Excel файла"""
         if not PANDAS_AVAILABLE:
             logger.warning("pandas не установлен")
             return ""
@@ -242,7 +203,6 @@ class ExcelHandler:
         
         os.makedirs(os.path.dirname(filename) if os.path.dirname(filename) else '.', exist_ok=True)
         
-        # Создание шаблона с примерами
         data = {
             'Заводской номер': ['12345678', '87654321', ''],
             'Наименование': ['Счетчик электрической энергии Меркурий 201', '', ''],

@@ -22,6 +22,14 @@ from config import Config
 
 logger = logging.getLogger(__name__)
 
+_CONNECTION_ERRORS = (
+    'Cannot connect to host', 'Temporary failure in name resolution',
+    'Connection', 'connect', 'Name or service not known',
+    'No address', 'getaddrinfo'
+)
+_RETRYABLE_ERRORS = {'429', '502', 'timeout', '408'}
+_CONN_RETRY_BASE = 3  # базовая пауза для сетевых ошибок (сек)
+
 
 class ParallelAPIClient:
     """
@@ -38,8 +46,10 @@ class ParallelAPIClient:
         self.semaphore = None
         self.session = None
         self.stats = {'requests': 0, 'errors': 0, 'found': 0}
-        # Статистика по ошибкам для отправки в поддержку
         self.error_log = []
+        self._connection_error_count = 0
+        self._last_conn_error_time = None
+        self._conn_cooldown_until = None
     
     async def __aenter__(self):
         self.semaphore = asyncio.Semaphore(self.max_concurrent)
@@ -63,23 +73,6 @@ class ParallelAPIClient:
                          start: int = 0, rows: int = None,
                          verification_date: str = None,
                          filters: Dict[str, str] = None) -> Dict:
-        """
-        Поиск в реестре VRI с обработкой ошибок
-
-        Адаптировано из arshin_app.py
-
-        Args:
-            search_term: Поисковая строка (search параметр)
-            year: Год поверки (не используется если указан verification_date)
-            start: Начальная позиция
-            rows: Количество записей
-            verification_date: Конкретная дата поверки (yyyy-MM-dd)
-            filters: Словарь атрибутивных фильтров {параметр: значение}
-                     Пример: {'mi_number': '123*', 'mit_number': '77%'}
-
-        Returns:
-            Dict с items, count, error
-        """
         if rows is None:
             rows = Config.MAX_ROWS_PER_REQUEST
 
@@ -87,24 +80,19 @@ class ParallelAPIClient:
         rows = max(1, rows)
         start = max(0, start)
 
-        # Формирование параметров запроса
         params = {}
 
-        # Поисковая строка (опционально)
         if search_term:
             params['search'] = quote(search_term, safe='*')
 
-        # Дата поверки имеет приоритет над годом
         if verification_date:
             params['verification_date'] = verification_date
         elif year:
             params['year'] = year
 
-        # Стандартные параметры
         params['start'] = start
         params['rows'] = rows
 
-        # Атрибутивные фильтры (дополнительно)
         if filters:
             for key, value in filters.items():
                 params[key] = quote(value, safe='*?')
@@ -119,23 +107,25 @@ class ParallelAPIClient:
                         items = data.get('result', {}).get('items', [])
                         total = data.get('result', {}).get('count', 0)
                         self.stats['found'] += len(items)
+                        self._connection_error_count = 0
+                        self._conn_cooldown_until = None
                         return {'items': items, 'count': total, 'error': None}
 
-                    elif resp.status == 429:  # Too Many Requests
+                    elif resp.status == 429:
                         logger.warning(f"⚠️  API 429: пауза 3с")
                         await asyncio.sleep(3)
                         return {'items': [], 'count': 0, 'error': '429'}
 
-                    elif resp.status == 502:  # Bad Gateway
+                    elif resp.status == 502:
                         logger.warning(f"⚠️  API 502: пауза 2с")
                         await asyncio.sleep(2)
                         return {'items': [], 'count': 0, 'error': '502'}
 
-                    elif resp.status == 408:  # Request Timeout
+                    elif resp.status == 408:
                         logger.warning(f"⚠️  API 408: превышен лимит времени поиска")
                         return {'items': [], 'count': 0, 'error': '408'}
 
-                    elif resp.status == 409:  # Превышен лимит страниц
+                    elif resp.status == 409:
                         logger.warning(f"⚠️  API 409: лимит страниц")
                         return {'items': [], 'count': 0, 'error': '409'}
 
@@ -143,7 +133,7 @@ class ParallelAPIClient:
                         logger.error(f"❌ API 400: некорректный запрос")
                         return {'items': [], 'count': 0, 'error': '400'}
 
-                    elif resp.status >= 500:  # 5XX ошибки сервера
+                    elif resp.status >= 500:
                         error_time = datetime.now().isoformat()
                         error_info = {
                             'status': resp.status,
@@ -171,30 +161,35 @@ class ParallelAPIClient:
 
             except Exception as e:
                 self.stats['errors'] += 1
-                logger.error(f"❌ Ошибка: {e}")
-                return {'items': [], 'count': 0, 'error': str(e)}
+                err_msg = str(e)
+                is_conn_error = any(phrase in err_msg for phrase in _CONNECTION_ERRORS)
+                
+                if is_conn_error:
+                    self._connection_error_count += 1
+                    now = datetime.now()
+                    if self._last_conn_error_time is None or (now - self._last_conn_error_time).total_seconds() > 30:
+                        logger.error(f"❌ Ошибка соединения: {err_msg}")
+                    self._last_conn_error_time = now
+                    if self._connection_error_count % 20 == 0:
+                        logger.error(f"❌ Накоплено {self._connection_error_count} ошибок соединения, пауза 10с...")
+                        self._conn_cooldown_until = now
+                    return {'items': [], 'count': 0, 'error': 'connection', 'error_msg': err_msg}
+                else:
+                    logger.error(f"❌ Ошибка: {err_msg}")
+                    return {'items': [], 'count': 0, 'error': str(e)}
     
     async def search_with_retry(self, search_term: str = None, year: int = None,
                                  start: int = 0, rows: int = None,
                                  verification_date: str = None,
                                  filters: Dict[str, str] = None,
                                  max_retries: int = 3) -> Dict:
-        """
-        Поиск с повторными попытками
-
-        Args:
-            search_term: Поисковая строка
-            year: Год поверки
-            start: Начальная позиция
-            rows: Количество записей
-            verification_date: Дата поверки (приоритет над year)
-            filters: Атрибутивные фильтры
-            max_retries: Максимум попыток
-
-        Returns:
-            Dict с результатами
-        """
         for attempt in range(max_retries):
+            if self._conn_cooldown_until:
+                wait = (self._conn_cooldown_until - datetime.now()).total_seconds()
+                if wait > 0:
+                    await asyncio.sleep(min(wait, 10))
+                    self._conn_cooldown_until = None
+
             result = await self.search_vri(
                 search_term=search_term,
                 year=year,
@@ -207,9 +202,10 @@ class ParallelAPIClient:
             if result.get('error') is None:
                 return result
 
-            # Повторная попытка при ошибках
-            if result.get('error') in ['429', '502', 'timeout', '408']:
-                delay = Config.REQUEST_DELAY * (2 ** attempt)
+            error = result.get('error', '')
+            if error in _RETRYABLE_ERRORS or error == 'connection':
+                base_delay = _CONN_RETRY_BASE if error == 'connection' else Config.REQUEST_DELAY
+                delay = base_delay * (2 ** attempt)
                 logger.debug(f"Повторная попытка {attempt+1}/{max_retries} через {delay}с")
                 await asyncio.sleep(delay)
             else:
@@ -218,26 +214,12 @@ class ParallelAPIClient:
         return result
 
     async def get_vri_record(self, vri_id: str) -> Dict:
-        """
-        Получение отдельной записи по идентификатору vri_id
-
-        Спецификация: раздел 3.2
-        URL: {base_url}/{vri_id}
-        Пример: https://fgis.gost.ru/fundmetrology/eapi/vri/fee2ff47-70d8-4165-f1ee-e508987d7381
-
-        Args:
-            vri_id: Идентификатор версии элемента
-
-        Returns:
-            Dict с данными записи или ошибкой
-        """
         url = f"{self.base_url}/{vri_id}"
 
         try:
             async with self.session.get(url) as resp:
                 if resp.status == 200:
                     data = await resp.json()
-                    # Проверка статуса публикации (раздел 4 спецификации)
                     result = data.get('result', {})
                     pub_status = result.get('publication', {}).get('status', '')
 
@@ -284,27 +266,34 @@ class ParallelAPIClient:
             return {'item': None, 'error': 'timeout'}
 
         except Exception as e:
-            logger.error(f"❌ Ошибка получения записи {vri_id}: {e}")
-            return {'item': None, 'error': str(e)}
+            err_msg = str(e)
+            is_conn_error = any(phrase in err_msg for phrase in _CONNECTION_ERRORS)
+            if is_conn_error:
+                self._connection_error_count += 1
+                now = datetime.now()
+                if self._last_conn_error_time is None or (now - self._last_conn_error_time).total_seconds() > 30:
+                    logger.error(f"❌ Ошибка соединения: {err_msg}")
+                self._last_conn_error_time = now
+                return {'item': None, 'error': 'connection', 'error_msg': err_msg}
+            else:
+                logger.error(f"❌ Ошибка получения записи {vri_id}: {e}")
+                return {'item': None, 'error': str(e)}
 
     async def get_vri_record_with_retry(self, vri_id: str, max_retries: int = 3) -> Dict:
-        """
-        Получение записи по vri_id с повторными попытками
-
-        Args:
-            vri_id: Идентификатор записи
-            max_retries: Максимум попыток
-
-        Returns:
-            Dict с результатами
-        """
         for attempt in range(max_retries):
+            if self._conn_cooldown_until:
+                wait = (self._conn_cooldown_until - datetime.now()).total_seconds()
+                if wait > 0:
+                    await asyncio.sleep(min(wait, 10))
+                    self._conn_cooldown_until = None
+
             result = await self.get_vri_record(vri_id)
 
             if result.get('error') is None:
                 return result
 
-            if result.get('error') in ['429', 'timeout', '502', '503', '504']:
+            error = result.get('error', '')
+            if error in _RETRYABLE_ERRORS or error == 'connection' or error in ['502', '503', '504']:
                 delay = Config.REQUEST_DELAY * (2 ** attempt)
                 logger.debug(f"Повторная попытка {attempt+1}/{max_retries} для {vri_id}")
                 await asyncio.sleep(delay)
@@ -317,21 +306,6 @@ class ParallelAPIClient:
                               pages: List[int] = None,
                               verification_date: str = None,
                               filters: Dict[str, str] = None) -> List[Dict]:
-        """
-        Параллельная загрузка нескольких страниц
-
-        Ключевой метод для производительности!
-
-        Args:
-            search_term: Поисковая строка
-            year: Год поверки
-            pages: Список номеров страниц
-            verification_date: Дата поверки (приоритет над year)
-            filters: Атрибутивные фильтры
-
-        Returns:
-            Список результатов
-        """
         if pages is None:
             pages = [0]
 
@@ -349,10 +323,4 @@ class ParallelAPIClient:
         return results
 
     def get_error_log(self) -> List[Dict]:
-        """
-        Получить журнал ошибок для отправки в поддержку
-
-        Returns:
-            Список записей об ошибках
-        """
         return self.error_log.copy()

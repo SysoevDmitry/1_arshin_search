@@ -36,56 +36,41 @@ class VerificationRecord:
     
     # Связи (для пакетного поиска из Excel)
     search_query: str = ""
-    row_index: int = 0  # Индекс строки в Excel (1-based)
-    id_pu: str = ""  # Id_ПУ из исходного файла
+    row_index: int = 0
+    id_pu: str = ""
     
     # Данные из исходного Excel файла (сохраняются для экспорта)
-    contract_number: str = ""  # Номер договора
-    edo_code: str = ""  # Код ЭДО
-    balance_owner: str = ""  # Балансовая принадлежность
-    operation_responsibility: str = ""  # Эксплуатационная ответственность
-    mpi: str = ""  # МПИ (межповерочный интервал)
+    contract_number: str = ""
+    edo_code: str = ""
+    balance_owner: str = ""
+    operation_responsibility: str = ""
+    mpi: str = ""
 
     @staticmethod
     def generate_url(vri_id: str) -> str:
-        """Генерация URL записи в ФГИС АРШИН"""
         return f"https://fgis.gost.ru/fundmetrology/cm/erts/?id={vri_id}"
 
     @property
     def record_url(self) -> str:
-        """URL записи"""
         return self.generate_url(self.vri_id)
 
     @staticmethod
     def is_electric_meter(title: str, notation: str = "", modification: str = "") -> bool:
-        """
-        Проверка: электросчетчик
-        Возвращает True только для счетчиков электроэнергии
-        """
         combined = f"{title} {notation} {modification}".lower()
         
         if not combined:
             return False
         
-        # Исключения (не электрические приборы)
         exclude_keywords = [
-            # Вода
             'воды', 'водомер', 'водосчетчик', 'холодной воды', 'горячей воды',
             'счетчик воды', 'крыльчатые',
-            # Газ
             'газа', 'газ', 'газосчетчик', 'газовые', 'бытовые газовые',
             'счетчик газа',
-            # Тепло
             'тепл', 'теплопотребление', 'тепловычислитель',
-            # Медицинские приборы
             'термометры медицинские', 'термометр медицинский',
-            # Весы
             'весы', 'взвешивания',
-            # Давление
             'манометры', 'вакуумметры', 'мановакуумметры',
-            # Температура
             'термометры ртутные', 'термометры стеклянные',
-            # Прочие
             'штангенглубиномеры', 'нутромеры', 'ареометры', 'гигрометры',
             'мегаомметры', 'расхода электромагнитные', 'сигнализаторы',
         ]
@@ -94,7 +79,6 @@ class VerificationRecord:
             if keyword in combined:
                 return False
         
-        # Включения (электрическая энергия)
         include_keywords = [
             'электрической энергии', 'электроэнергии', 'электросчетчик',
             'счетчик электрической', 'счетчик электроэнергии',
@@ -111,18 +95,15 @@ class VerificationRecord:
 
     @staticmethod
     def detect_manufacturer(title: str, notation: str = "", modification: str = "") -> str:
-        """Определение производителя по названию"""
         combined = f"{title} {notation} {modification}".lower()
         
         if not combined or combined.strip() == 'нет данных':
             return 'Другие'
         
-        # Проверка по словарю
         for keyword, manufacturer in MANUFACTURERS_RULES.items():
             if keyword in combined:
                 return manufacturer
         
-        # Резервные правила
         fallback = {
             'меркурий': 'Меркурий',
             'нева': 'Нева',
@@ -138,10 +119,6 @@ class VerificationRecord:
     def from_api(cls, data: dict, search_query: str = "",
                  row_index: int = 0, id_pu: str = "",
                  original_data: dict = None) -> 'VerificationRecord':
-        """
-        Создание записи из ответа API с сохранением связей
-        Адаптировано из arshin_app.py
-        """
         original = original_data or {}
         
         record = cls(
@@ -157,7 +134,6 @@ class VerificationRecord:
             org_title=data.get('org_title', ''),
             result_docnum=data.get('result_docnum', ''),
             
-            # Служебные поля
             manufacturer=cls.detect_manufacturer(
                 data.get('mit_title', ''),
                 data.get('mit_notation', ''),
@@ -165,12 +141,10 @@ class VerificationRecord:
             ),
             collected_at=datetime.now().isoformat(),
             
-            # Связи
             search_query=search_query,
             row_index=row_index,
             id_pu=id_pu,
             
-            # Данные из Excel файла
             contract_number=original.get('Номер договора', original.get('contract_number', '')),
             edo_code=original.get('Код ЭДО', original.get('edo_code', '')),
             balance_owner=original.get('Балансовая принадлежность', original.get('balance_owner', '')),
@@ -181,16 +155,11 @@ class VerificationRecord:
         return record
 
     def to_dict(self) -> dict:
-        """Преобразование в словарь с полной служебной информацией"""
         result = asdict(self)
         result['record_url'] = self.record_url
         return result
 
     def get_unique_key(self) -> tuple:
-        """
-        Ключ для проверки на ПОЛНУЮ уникальность
-        Адаптировано из arshin_app.py - проверка по всем основным + служебным полям
-        """
         return (
             self.vri_id,
             self.mit_number,
