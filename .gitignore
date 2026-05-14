@@ -38,9 +38,6 @@ logs/
 Logs/
 *.log
 
-# Konsol_Excel logs
-Konsol_Excel/Logs/
-
 # Database
 *.db
 *.sqlite
@@ -50,17 +47,11 @@ Konsol_Excel/Logs/
 .DS_Store
 Thumbs.db
 
-# Excel exports
+# Data files
 exports/
 *.xlsx
 *.xls
-
-# Konsol_Excel exports
-Konsol_Excel/exports/
-
-# CSV result files
 *.csv
-Konsol_Excel/*.csv
 
 # Lock files
 *.lock
@@ -69,3 +60,11 @@ Konsol_Excel/*.csv
 
 # Local config
 config/local.*
+
+# OpenCode / AI assistant (local only)
+opencode.json
+tui.json
+AGENTS.md
+
+# Konsol_Excel local docs
+Konsol_Excel/CHANGELOG_*.md

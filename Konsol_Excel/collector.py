@@ -324,8 +324,6 @@ class ExcelCollector:
 
         for i, query in enumerate(queries):
             if i < start_from:
-                if self.pbar:
-                    self.pbar.update(1)
                 continue
 
             serial_number = query.get('mi_number', '')
@@ -381,10 +379,21 @@ class ExcelCollector:
 
             if self.pbar:
                 self.pbar.update(1)
-                self.pbar.set_postfix({
+                postfix = {
                     "найдено": self.stats['records_found'],
                     "сохранено": self.stats['records_saved']
-                })
+                }
+                try:
+                    remaining_s = self.pbar.format_dict.get('remaining_s')
+                    if remaining_s and remaining_s > 0:
+                        remaining_h = remaining_s / 3600
+                        if remaining_h >= 24:
+                            postfix["осталось"] = f"{remaining_h:.1f}ч ({remaining_h/24:.1f} дн.)"
+                        else:
+                            postfix["осталось"] = f"{remaining_h:.1f}ч"
+                except Exception:
+                    pass
+                self.pbar.set_postfix(postfix)
 
         if self.pbar:
             self.pbar.close()
