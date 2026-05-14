@@ -1,5 +1,5 @@
 #!/bin/bash
-# ФГИС АРШИН - Konsol_Excel - Скрипт запуска для Armbian (ARM)
+# VRInfo - Konsol_Excel - Скрипт запуска для Armbian (ARM)
 # Использует системный Python, без виртуального окружения
 # Тяжёлые пакеты ставит через apt (предсобранные для ARM), лёгкие — через pip
 
@@ -9,7 +9,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PYTHON=""
 
 echo "======================================================================"
-echo "🔍 ФГИС АРШИН - Konsol_Excel v6.3 (Armbian/ARM, системный Python)"
+echo "🔍 VRInfo - Konsol_Excel v6.3 (Armbian/ARM, системный Python)"
 echo "======================================================================"
 
 # Проверка архитектуры

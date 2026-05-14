@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-Конфигурация для Excel версии ФГИС АРШИН
+Конфигурация для VRInfo (Excel версия)
 """
 
 import os

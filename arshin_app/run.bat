@@ -1,6 +1,6 @@
 @echo off
 chcp 65001 >nul 2>&1
-REM ФГИС АРШИН - Скрипт запуска GUI приложения для Windows
+REM VRInfo - Скрипт запуска GUI приложения для Windows
 REM Проверка виртуального окружения и зависимостей
 
 setlocal enabledelayedexpansion
@@ -12,7 +12,7 @@ set "REQUIREMENTS_FILE=%SCRIPT_DIR%requirements.txt"
 set "PYTHON="
 
 echo ======================================================================
-echo 🔍 ФГИС АРШИН - GUI Приложение v2.14
+echo 🔍 VRInfo - GUI Приложение v3.0
 echo ======================================================================
 
 REM Проверка виртуального окружения

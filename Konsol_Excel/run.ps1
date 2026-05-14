@@ -11,7 +11,7 @@ param(
 )
 
 Write-Host "======================================================================" -ForegroundColor Cyan
-Write-Host "FGIS ARSHIN - v3.0" -ForegroundColor Yellow
+Write-Host "VRInfo - v6.3" -ForegroundColor Yellow
 Write-Host "======================================================================" -ForegroundColor Cyan
 
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path

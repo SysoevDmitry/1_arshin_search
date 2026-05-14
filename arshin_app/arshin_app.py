@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-УНИВЕРСАЛЬНОЕ ПРИЛОЖЕНИЕ ДЛЯ РАБОТЫ С ФГИС АРШИН
+VRInfo — приложение для работы с ФГИС АРШИН
 Версия 3.0 — объединение v2.1 + v1.2
 
 Возможности:
@@ -1649,7 +1649,7 @@ class ArshinApp:
 
     def __init__(self, root):
         self.root = root
-        self.root.title("ФГИС Аршин - Поиск и сбор данных v3.0")
+        self.root.title("VRInfo - Поиск и сбор данных v3.0")
         self.root.geometry(f"{Config.WINDOW_WIDTH}x{Config.WINDOW_HEIGHT}")
         
         # Минимальные размеры для корректного отображения
@@ -3273,8 +3273,8 @@ class ArshinApp:
     def show_about(self):
         """О программе"""
         about_text = """
-        ФГИС Аршин - Поиск и сбор данных
-        Версия 2.1 (оптимизированная)
+        VRInfo - Поиск и сбор данных
+        Версия 3.0
 
         Возможности:
         • Поиск с использованием файлов конфигурации
@@ -3316,7 +3316,7 @@ def main():
     os.makedirs("logs", exist_ok=True)
 
     logger.info("="*60)
-    logger.info("ЗАПУСК ПРИЛОЖЕНИЯ ФГИС АРШИН v2.1")
+    logger.info("ЗАПУСК ПРИЛОЖЕНИЯ VRInfo v3.0")
     logger.info(f"Python: {sys.version}")
     logger.info(f"Платформа: {sys.platform}")
     logger.info(f"Лог файл: {LOG_FILE}")

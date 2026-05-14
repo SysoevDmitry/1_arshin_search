@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-ФГИС АРШИН - Excel версия с параллельными запросами
+VRInfo — приложение для работы с ФГИС АРШИН
 Версия 6.3 — Объединённая: UPSERT + DB-прогресс + --export-only
 
 Возможности:
@@ -262,7 +262,7 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
 
 def main():
     parser = argparse.ArgumentParser(
-        description='ФГИС АРШИН - Excel версия v6.3 (объединённая)',
+        description='VRInfo - Excel версия v6.3 (объединённая)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Примеры:
@@ -332,7 +332,7 @@ def main():
     args = parser.parse_args()
 
     print("\n" + "="*70)
-    print("🔍 ФГИС АРШИН - Excel версия v6.3 (объединённая: UPSERT + DB-прогресс)")
+    print("🔍 VRInfo - Excel версия v6.3 (объединённая: UPSERT + DB-прогресс)")
     print("="*70)
     print(f"📅 Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🚀 Параллельных запросов: {args.concurrent}")
