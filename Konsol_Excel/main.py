@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """
-VRInfo — приложение для работы с ФГИС АРШИН
-Версия 6.3 — Объединённая: UPSERT + DB-прогресс + --export-only
+ФГИС АРШИН - Excel версия с параллельными запросами
+Версия 6.4 — Авто-диапазон: --auto-range + цепочка приоритетов
 
 Возможности:
 - Пакетная обработка Excel файлов
@@ -20,16 +20,19 @@ VRInfo — приложение для работы с ФГИС АРШИН
 - Детализированное логирование 5XX ошибок
 - Экспорт БД без повторного поиска (--export-only)
 - Гибкое управление продолжением (--resume / --no-resume / диалог)
+- Авто-диапазон (--auto-range): год−1 … год+2 для каждой строки
+- Цепочка приоритетов: Дата поверки.Год → Год выпуска → мода Даты госповерки → 7 лет
 
 Запуск:
     python main.py -f запрос.xlsx -y 2020-2025 -o результат.csv
+    python main.py -f запрос.xlsx --auto-range -o результат.csv
     python main.py -f запрос.xlsx --verification-date 2024-05-15 -o результат.csv
     python main.py --template шаблон.xlsx
     python main.py --stats
     python main.py --get-record vri_id
-    python main.py --export-only результат.csv      # экспорт без поиска
-    python main.py -f запрос.xlsx --resume           # продолжить после сбоя
-    python main.py -f запрос.xlsx --no-resume        # начать заново
+    python main.py --export-only результат.csv
+    python main.py -f запрос.xlsx --resume
+    python main.py -f запрос.xlsx --no-resume
 """
 
 import os
@@ -66,9 +69,11 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-def parse_years(years_str: str) -> List[int]:
+def parse_years(years_str) -> Optional[List[int]]:
+    if years_str is None or str(years_str).strip().lower() in ('', 'auto', 'none'):
+        return None
     years = []
-    for y in years_str.split(','):
+    for y in str(years_str).split(','):
         y = y.strip()
         if '-' in y:
             start, end = map(int, y.split('-'))
@@ -158,10 +163,11 @@ def auto_output_name() -> str:
     return prepare_output_path(os.path.join("exports", base))
 
 
-async def run_excel_search(filename: str, years: List[int], output: Optional[str],
+async def run_excel_search(filename: str, years: Optional[List[int]], output: Optional[str],
                             verification_date: str = None,
                             use_attribute_search: bool = True,
-                            resume: Optional[bool] = None):
+                            resume: Optional[bool] = None,
+                            auto_range: bool = False):
     print(f"\n📂 Чтение файла: {filename}")
 
     if not os.path.exists(filename):
@@ -176,13 +182,50 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
 
     print(f"✅ Загружено {len(queries)} запросов")
 
+    # Вычисление базового года для авто-диапазона
+    fallback_year = None
+    if auto_range and not verification_date:
+        fallback_year = ExcelCollector._compute_base_year_from_gosverka(queries)
+        has_ver_year = any(q.get('verification_year') or q.get('year') for q in queries
+                          if str(q.get('verification_year', '')).lower() not in ('', 'nan', 'none')
+                          or str(q.get('year', '')).lower() not in ('', 'nan', 'none'))
+        has_mfg_year = any(str(q.get('manufacture_year', '')).lower() not in ('', 'nan', 'none')
+                          for q in queries)
+        has_gosverka = any(str(q.get('gosverka_date', '')).lower() not in ('', 'nan', 'none')
+                          for q in queries)
+
+        if has_ver_year:
+            print(f"📅 Режим: АВТО — «Дата поверки. Год» → год−1 … год+2")
+        elif has_mfg_year:
+            print(f"📅 Режим: АВТО — «Год выпуска» → год−1 … год+2")
+        elif fallback_year is not None:
+            print(f"📅 Режим: АВТО — мода «Дата госповерки» = {fallback_year} → {fallback_year-1}…{fallback_year+2}")
+        else:
+            print(f"📅 Режим: АВТО — ничего не найдено, последние 7 лет")
+
+        if fallback_year is not None:
+            print(f"   Базовый год (мода): {fallback_year}")
+        years = []
+    elif not years and not verification_date:
+        from datetime import datetime
+        tek = datetime.now().year
+        years = list(range(tek - 5, tek + 1))
+
     if verification_date:
         print(f"📅 Дата поверки: {verification_date}")
     else:
-        print(f"📅 Годы поиска: {', '.join(map(str, years))}")
+        if auto_range:
+            print(f"📅 Годы поиска: АВТО (из строк Excel)")
+        else:
+            print(f"📅 Годы поиска (глобально): {min(years)}–{max(years)} ({len(years)} лет)")
 
     print(f"🚀 Параллельных запросов: {Config.MAX_CONCURRENT_REQUESTS}")
     print(f"🔍 Атрибутивный поиск: {'включен' if use_attribute_search else 'выключен'}")
+    if auto_range:
+        print(f"🎯 Цепочка: «Дата поверки. Год» → «Год выпуска» → мода «Дата госповерки» → последние 7 лет")
+
+    if years is None:
+        years = []
 
     db = Database()
     start_from = 0
@@ -245,7 +288,9 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
             queries, years,
             verification_date=verification_date,
             use_attribute_search=use_attribute_search,
-            start_from=start_from
+            start_from=start_from,
+            fallback_year=fallback_year,
+            auto_range=auto_range
         )
         db_stats = db.get_stats()
 
@@ -262,30 +307,30 @@ async def run_excel_search(filename: str, years: List[int], output: Optional[str
 
 def main():
     parser = argparse.ArgumentParser(
-        description='VRInfo - Excel версия v6.3 (объединённая)',
+        description='ФГИС АРШИН - Excel версия v6.4 (авто-диапазон)',
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog='''
 Примеры:
-  # Через скрипт запуска (рекомендуется)
-  ./run.sh -f запрос.xlsx -y 2020,2021,2022 -o результат.csv
+  # Старый режим: глобальный диапазон годов (по умолчанию)
+  ./run.sh -f запрос.xlsx -y 2020-2025 -o результат.csv
 
-  # Через python (без скрипта)
-  python %(prog)s -f запрос.xlsx -y 2020,2021,2022 -o результат.csv
+  # Новый режим: авто-диапазон год−1 … год+2 (--auto-range)
+  ./run.sh -f данные.xlsx --auto-range -o export.csv
 
-  # Поиск по диапазону годов
-  ./run.sh -f данные.xlsx -y 2020-2025 -o export.csv
+  # Авто-диапазон + глобальный fallback (для строк без данных)
+  ./run.sh -f данные.xlsx --auto-range -y 2020-2025 -o export.csv
 
-  # Без -o — автоимя (20260514_export.csv)
-  ./run.sh -f запрос.xlsx -y 2020-2025 --attribute-search
+  # Цепочка: Дата поверки.Год → Год выпуска → мода Даты госповерки → 7 лет
+  # Подробнее в README.md и KONSOL_APP.md
+
+  # Без -o — автоимя
+  ./run.sh -f запрос.xlsx --attribute-search
 
   # Поиск по конкретной дате поверки
   ./run.sh -f данные.xlsx --verification-date 2024-05-15 -o export.csv
 
-  # Атрибутивный поиск (рекомендуется спецификацией)
-  ./run.sh -f запрос.xlsx -y 2024 --attribute-search
-
   # Возобновление после сбоя
-  ./run.sh -f запрос.xlsx -y 2020-2025 --resume
+  ./run.sh -f запрос.xlsx --resume
 
   # Создать шаблон Excel
   ./run.sh --template шаблон.xlsx
@@ -301,7 +346,7 @@ def main():
     parser.add_argument('-f', '--file', type=str,
                         help='Excel файл с запросами')
     parser.add_argument('-y', '--years', type=str, default='2020-2025',
-                        help='Годы поиска (2020,2021 или 2020-2025)')
+                        help='Годы поиска (2020,2021 или 2020-2025). По умолчанию: 2020-2025')
     parser.add_argument('-o', '--output', type=str,
                         help='Экспорт в CSV (если не указан, имя генерируется автоматически)')
 
@@ -309,6 +354,8 @@ def main():
                         help='Дата поверки (yyyy-MM-dd), приоритет над --years')
     parser.add_argument('--attribute-search', action='store_true',
                         help='Использовать атрибутивный поиск (рекомендуется)')
+    parser.add_argument('--auto-range', action='store_true',
+                        help='Авто-диапазон: год−1 … год+2 от «Дата поверки. Год» для каждой строки')
     parser.add_argument('--get-record', type=str, metavar='VRI_ID',
                         help='Получить запись по vri_id')
 
@@ -332,7 +379,7 @@ def main():
     args = parser.parse_args()
 
     print("\n" + "="*70)
-    print("🔍 VRInfo - Excel версия v6.3 (объединённая: UPSERT + DB-прогресс)")
+    print("🔍 ФГИС АРШИН - Excel версия v6.4 (авто-диапазон)")
     print("="*70)
     print(f"📅 Дата: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     print(f"🚀 Параллельных запросов: {args.concurrent}")
@@ -342,6 +389,8 @@ def main():
         print(f"📅 Дата поверки: {args.verification_date}")
     if args.attribute_search:
         print(f"🔍 Атрибутивный поиск: включен")
+    if args.auto_range:
+        print(f"🎯 Авто-диапазон: включен (год−1 … год+2 от «Дата поверки. Год»)")
     print("="*70)
 
     if not PANDAS_AVAILABLE:
@@ -400,7 +449,10 @@ def main():
         return
 
     years = parse_years(args.years)
-    print(f"📋 Выбрано годов: {len(years)} ({min(years)}-{max(years)})")
+    if years is not None:
+        print(f"📋 Годы поиска: {min(years)}–{max(years)} ({len(years)} лет)")
+    else:
+        print(f"📋 Годы поиска: не заданы (будут автоопределены)")
 
     if args.no_resume:
         db_check = Database()
@@ -419,7 +471,8 @@ def main():
             args.file, years, args.output,
             verification_date=args.verification_date,
             use_attribute_search=args.attribute_search,
-            resume=resume_flag
+            resume=resume_flag,
+            auto_range=args.auto_range
         ))
     except KeyboardInterrupt:
         print("\n\n⚠️  Прервано пользователем (Ctrl+C)")

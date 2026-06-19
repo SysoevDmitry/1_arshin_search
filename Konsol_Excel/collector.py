@@ -159,9 +159,83 @@ class ExcelCollector:
             self.pbar.close()
 
     @staticmethod
-    def _adjust_years_for_query(query: Dict, years: List[int]) -> List[int]:
+    def _extract_year_from_date(date_str: str) -> Optional[int]:
+        if not date_str or str(date_str).lower() == 'nan':
+            return None
+        import re
+        match = re.search(r'(\d{4})', str(date_str))
+        if match:
+            year = int(match.group(1))
+            if 1900 <= year <= 2100:
+                return year
+        return None
+
+    @staticmethod
+    def _compute_base_year_from_gosverka(queries: List[Dict]) -> Optional[int]:
+        from collections import Counter
+        years_list = []
+        for q in queries:
+            gd = q.get('gosverka_date', '')
+            year = ExcelCollector._extract_year_from_date(gd)
+            if year:
+                years_list.append(year)
+        if not years_list:
+            return None
+        counter = Counter(years_list)
+        most_common, cnt = counter.most_common(1)[0]
+        logger.info(f"📅 Мода «Дата госповерки»: {most_common} (встречается {cnt} раз(а) из {len(years_list)} значений)")
+        return most_common
+
+    @staticmethod
+    def _adjust_years_for_query(query: Dict, years: List[int],
+                                fallback_year: int = None,
+                                auto_range: bool = False) -> List[int]:
+        if auto_range:
+            ver_year_str = query.get('verification_year', '')
+            if not ver_year_str or str(ver_year_str).lower() == 'nan':
+                ver_year_str = query.get('year', '')
+
+            if ver_year_str and str(ver_year_str).lower() != 'nan':
+                try:
+                    vy = int(float(ver_year_str))
+                    nachalo = vy - 1
+                    konec = vy + 2
+                    logger.info(f"  📅 Строка {query.get('row_index', '?')}: год поверки {vy} → диапазон {nachalo}–{konec}")
+                    return list(range(nachalo, konec + 1))
+                except (ValueError, TypeError):
+                    pass
+
+            manufacture_year_str = query.get('manufacture_year', '')
+            if manufacture_year_str and str(manufacture_year_str).lower() != 'nan':
+                try:
+                    my = int(float(manufacture_year_str))
+                    nachalo = my - 1
+                    konec = my + 2
+                    logger.info(f"  📅 Строка {query.get('row_index', '?')}: год выпуска {my} → диапазон {nachalo}–{konec}")
+                    return list(range(nachalo, konec + 1))
+                except (ValueError, TypeError):
+                    pass
+
+            if fallback_year is not None:
+                nachalo = fallback_year - 1
+                konec = fallback_year + 2
+                logger.info(f"  📅 Строка {query.get('row_index', '?')}: базовый год {fallback_year} (мода «Дата госповерки») → диапазон {nachalo}–{konec}")
+                return list(range(nachalo, konec + 1))
+
+            if years:
+                logger.info(f"  📅 Строка {query.get('row_index', '?')}: глобальный диапазон {min(years)}–{max(years)}")
+                return years
+
+            from datetime import datetime
+            tek = datetime.now().year
+            nachalo = tek - 6
+            konec = tek
+            logger.info(f"  📅 Строка {query.get('row_index', '?')}: ничего не найдено → последние 7 лет ({nachalo}–{konec})")
+            return list(range(nachalo, konec + 1))
+
+        # Старый режим (без --auto-range): manufacture_year сужает глобальный диапазон
         manufacture_year_str = query.get('manufacture_year', '')
-        if not manufacture_year_str or manufacture_year_str.lower() == 'nan':
+        if not manufacture_year_str or str(manufacture_year_str).lower() == 'nan':
             return years
 
         try:
@@ -308,14 +382,22 @@ class ExcelCollector:
                                       batch_size: int = 5,
                                       verification_date: str = None,
                                       use_attribute_search: bool = True,
-                                      start_from: int = 0) -> Dict:
+                                      start_from: int = 0,
+                                      fallback_year: int = None,
+                                      auto_range: bool = False) -> Dict:
         total_queries = len(queries)
 
         if verification_date:
             logger.info(f"🔍 Обработка {total_queries} запросов на дату {verification_date}"
                        + (f" (с индекса {start_from})" if start_from > 0 else ""))
         else:
-            logger.info(f"🔍 Обработка {total_queries} запросов за {len(years)} годов"
+            if auto_range:
+                opis = "АВТО (год−1…год+2 от «Дата поверки. Год» / «Год выпуска» / мода «Дата госповерки»)"
+            elif years:
+                opis = f"за {len(years)} лет ({min(years)}–{max(years)})"
+            else:
+                opis = "без диапазона"
+            logger.info(f"🔍 Обработка {total_queries} запросов, {opis}"
                        + (f" (с индекса {start_from})" if start_from > 0 else ""))
 
         if TQDM_AVAILABLE:
@@ -346,9 +428,11 @@ class ExcelCollector:
             id_pu = query.get('id_pu', '')
             original_data = query.get('original_data', {})
 
-            query_years = self._adjust_years_for_query(query, years)
+            query_years = self._adjust_years_for_query(
+                query, years, fallback_year=fallback_year, auto_range=auto_range
+            )
 
-            if query_years != years:
+            if query_years and years and query_years != years:
                 mfg_year = query.get('manufacture_year', '')
                 logger.info(f"  📅 Строка {row_index}: год выпуска {mfg_year}, "
                            f"поиск {min(query_years)}–{max(query_years)} "
@@ -364,7 +448,12 @@ class ExcelCollector:
             )
 
             serial_short = serial_number[:20] + '...' if len(serial_number) > 20 else serial_number
-            year_range = f"{min(query_years)}–{max(query_years)}" if not verification_date else verification_date
+            if verification_date:
+                year_range = verification_date
+            elif query_years:
+                year_range = f"{min(query_years)}–{max(query_years)}"
+            else:
+                year_range = "без диапазона"
             logger.info(f"[{i+1}/{total_queries}] '{serial_short}' ({year_range}) → {found} записей")
 
             # Сохранение прогресса после каждого успешно обработанного запроса
@@ -409,7 +498,9 @@ class ExcelCollector:
                                 use_attribute_search: bool) -> str:
         if verification_date:
             return f"date={verification_date},attr={use_attribute_search}"
-        return f"years={min(years)}-{max(years)},attr={use_attribute_search}"
+        if years:
+            return f"years={min(years)}-{max(years)},attr={use_attribute_search}"
+        return f"years=auto,attr={use_attribute_search}"
 
     def get_stats(self) -> Dict:
         db_stats = self.db.get_stats()
